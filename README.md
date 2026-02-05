@@ -124,16 +124,13 @@ tailscale funnel 53937
 ┌─────────┐   1. audio   ┌─────────────┐   4. text   ┌─────────────┐
 │   PWA   │ ──────────►  │ Coordinator │ ──────────► │ Echo Client │
 │ (phone) │              │             │             │  (desktop)  │
-└─────────┘              └──────┬──────┘             └─────────────┘
-                                │
-                 ┌──────────────┼──────────────┐
-                 │              │              │
-                 ▼              │              ▼
-           ┌─────────┐         │        ┌─────────┐
-           │   STT   │         │        │ Ollama  │
-           └────┬────┘         │        └────┬────┘
-                │              │              │
-                └──► 2. text ──┴── 3. text ◄──┘
+└─────────┘              └─┬┬───────┬┬─┘             └─────────────┘
+         2. speech to text │^       |^ 3. raw to cleaned text 
+                           ││       ││
+                           ▼│       ▼│
+                   ┌─────────┐     ┌─────────┐
+                   │   STT   │     │ Ollama  │
+                   └─────────┘     └─────────┘             
 ```
 
 **Flow:** PWA sends audio → Coordinator → STT transcribes → Coordinator → Ollama cleans → Coordinator → Echo types
