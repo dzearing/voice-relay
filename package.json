@@ -1,0 +1,16 @@
+{
+  "name": "voice-relay",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/coordinator",
+    "packages/echo",
+    "packages/pwa"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "dev:coordinator": "npm run dev -w packages/coordinator",
+    "dev:echo": "npm run dev -w packages/echo",
+    "dev:pwa": "npm run dev -w packages/pwa"
+  }
+}

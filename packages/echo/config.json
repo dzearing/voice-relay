@@ -1,0 +1,7 @@
+{
+  "name": "maximushome",
+  "coordinatorUrl": "ws://localhost:53937/ws",
+  "outputMode": "paste",
+  "typeDelay": 20,
+  "copyToClipboard": true
+}

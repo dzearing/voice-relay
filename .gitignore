@@ -1,0 +1,31 @@
+node_modules/
+dist/
+*.log
+.env
+.env.local
+
+# SSL certificates
+packages/coordinator/certs/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Build outputs
+build/
+*.exe
+*.app
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go binaries
+apps/echo-desktop/voice-relay-echo*

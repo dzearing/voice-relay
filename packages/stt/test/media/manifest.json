@@ -1,0 +1,24 @@
+{
+  "tests": [
+    {
+      "file": "hello_world.wav",
+      "expected": "Hello world",
+      "description": "Simple greeting test"
+    },
+    {
+      "file": "quick_brown_fox.wav",
+      "expected": "The quick brown fox jumps over the lazy dog",
+      "description": "Pangram test"
+    },
+    {
+      "file": "numbers.wav",
+      "expected": "1-2-3-4-5",
+      "description": "Number sequence test"
+    },
+    {
+      "file": "filler_words.wav",
+      "expected": "So um I was thinking that maybe we could like go to the store",
+      "description": "Filler words test - Whisper removes 'uh' but keeps 'um' and 'like'"
+    }
+  ]
+}

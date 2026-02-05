@@ -1,0 +1,119 @@
+name: Build Echo Desktop
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install dependencies
+        run: |
+          brew install pkg-config
+
+      - name: Build macOS (arm64)
+        working-directory: apps/echo-desktop
+        run: |
+          go mod tidy
+          CGO_ENABLED=1 GOARCH=arm64 go build -o voice-relay-echo-darwin-arm64
+
+      - name: Build macOS (amd64)
+        working-directory: apps/echo-desktop
+        run: |
+          CGO_ENABLED=1 GOARCH=amd64 go build -o voice-relay-echo-darwin-amd64
+
+      - name: Create Universal Binary
+        working-directory: apps/echo-desktop
+        run: |
+          lipo -create -output VoiceRelayEcho voice-relay-echo-darwin-arm64 voice-relay-echo-darwin-amd64
+          chmod +x VoiceRelayEcho
+
+      - name: Create macOS App Bundle
+        working-directory: apps/echo-desktop
+        run: |
+          mkdir -p VoiceRelayEcho.app/Contents/MacOS
+          mkdir -p VoiceRelayEcho.app/Contents/Resources
+          mv VoiceRelayEcho VoiceRelayEcho.app/Contents/MacOS/
+          cat > VoiceRelayEcho.app/Contents/Info.plist << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key>
+            <string>VoiceRelayEcho</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.voicerelay.echo</string>
+            <key>CFBundleName</key>
+            <string>Voice Relay Echo</string>
+            <key>CFBundleVersion</key>
+            <string>1.0</string>
+            <key>CFBundleShortVersionString</key>
+            <string>1.0</string>
+            <key>LSUIElement</key>
+            <true/>
+            <key>LSMinimumSystemVersion</key>
+            <string>11.0</string>
+          </dict>
+          </plist>
+          EOF
+          zip -r VoiceRelayEcho-macOS.zip VoiceRelayEcho.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-app
+          path: apps/echo-desktop/VoiceRelayEcho-macOS.zip
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install TDM-GCC
+        run: |
+          choco install mingw -y
+
+      - name: Build Windows
+        working-directory: apps/echo-desktop
+        shell: bash
+        run: |
+          go mod tidy
+          CGO_ENABLED=1 go build -ldflags "-H windowsgui" -o VoiceRelayEcho.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: apps/echo-desktop/VoiceRelayEcho.exe
+
+  release:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-app
+          path: dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-exe
+          path: dist
+
+      - uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/VoiceRelayEcho-macOS.zip
+            dist/VoiceRelayEcho.exe
