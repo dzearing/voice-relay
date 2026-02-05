@@ -121,30 +121,22 @@ tailscale funnel 53937
 ## Architecture
 
 ```
-                               │
-                               │ 1. audio
-                               ▼
-┌─────────┐              ┌─────────────┐              ┌─────────────┐
-│   PWA   │ ──────────►  │ Coordinator │  ──────────► │ Echo Client │
-│ (phone) │    audio     │             │    text      │  (desktop)  │
-└─────────┘              └─────────────┘              └─────────────┘
-                               │ ▲
-                        2.     │ │  3.
-                        audio  │ │  text
-                               ▼ │
-                         ┌─────────┐
-                         │   STT   │
-                         └─────────┘
-                               │ ▲
-                        4.     │ │  5.
-                        text   │ │  cleaned
-                               ▼ │
-                         ┌─────────┐
-                         │ Ollama  │
-                         └─────────┘
+┌─────────┐   1. audio   ┌─────────────┐   4. text   ┌─────────────┐
+│   PWA   │ ──────────►  │ Coordinator │ ──────────► │ Echo Client │
+│ (phone) │              │             │             │  (desktop)  │
+└─────────┘              └──────┬──────┘             └─────────────┘
+                                │
+                 ┌──────────────┼──────────────┐
+                 │              │              │
+                 ▼              │              ▼
+           ┌─────────┐         │        ┌─────────┐
+           │   STT   │         │        │ Ollama  │
+           └────┬────┘         │        └────┬────┘
+                │              │              │
+                └──► 2. text ──┴── 3. text ◄──┘
 ```
 
-**Flow:** PWA records audio → Coordinator receives it → STT transcribes → Ollama cleans up → Echo client types it
+**Flow:** PWA sends audio → Coordinator → STT transcribes → Coordinator → Ollama cleans → Coordinator → Echo types
 
 ## Components
 
