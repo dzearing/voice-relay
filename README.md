@@ -10,7 +10,7 @@ Install the Echo client on any computer where you want text to appear:
 
 | Platform | Download |
 |----------|----------|
-| **macOS** | [VoiceRelayEcho-macOS.zip](https://github.com/dzearing/voice-relay/releases/latest/download/VoiceRelayEcho-macOS.zip) |
+| **macOS (M1-M4)** | [VoiceRelayEcho-macOS-arm64.zip](https://github.com/dzearing/voice-relay/releases/latest/download/VoiceRelayEcho-macOS-arm64.zip) |
 | **Windows** | [VoiceRelayEcho.exe](https://github.com/dzearing/voice-relay/releases/latest/download/VoiceRelayEcho.exe) |
 
 #### macOS Setup

@@ -8,7 +8,7 @@ on:
 
 jobs:
   build-macos:
-    runs-on: macos-13  # macos-latest (15) has deprecated CGDisplayCreateImageForRect
+    runs-on: macos-latest  # arm64 runner for M1-M4 Macs
     steps:
       - uses: actions/checkout@v4
 
@@ -17,27 +17,11 @@ jobs:
           go-version: '1.21'
           cache: false
 
-      - name: Install dependencies
-        run: |
-          brew install pkg-config
-
       - name: Build macOS (arm64)
         working-directory: apps/echo-desktop
         run: |
           go mod tidy
-          CGO_ENABLED=1 GOARCH=arm64 go build -o voice-relay-echo-darwin-arm64
-
-      - name: Build macOS (amd64)
-        working-directory: apps/echo-desktop
-        env:
-          SDKROOT: /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
-        run: |
-          CGO_ENABLED=1 GOARCH=amd64 go build -o voice-relay-echo-darwin-amd64
-
-      - name: Create Universal Binary
-        working-directory: apps/echo-desktop
-        run: |
-          lipo -create -output VoiceRelayEcho voice-relay-echo-darwin-arm64 voice-relay-echo-darwin-amd64
+          CGO_ENABLED=1 GOARCH=arm64 go build -o VoiceRelayEcho
           chmod +x VoiceRelayEcho
 
       - name: Create macOS App Bundle
@@ -65,15 +49,17 @@ jobs:
             <true/>
             <key>LSMinimumSystemVersion</key>
             <string>11.0</string>
+            <key>CFBundleIconFile</key>
+            <string>AppIcon</string>
           </dict>
           </plist>
           EOF
-          zip -r VoiceRelayEcho-macOS.zip VoiceRelayEcho.app
+          zip -r VoiceRelayEcho-macOS-arm64.zip VoiceRelayEcho.app
 
       - uses: actions/upload-artifact@v4
         with:
           name: macos-app
-          path: apps/echo-desktop/VoiceRelayEcho-macOS.zip
+          path: apps/echo-desktop/VoiceRelayEcho-macOS-arm64.zip
 
   build-windows:
     runs-on: windows-latest
@@ -119,5 +105,5 @@ jobs:
       - uses: softprops/action-gh-release@v1
         with:
           files: |
-            dist/VoiceRelayEcho-macOS.zip
+            dist/VoiceRelayEcho-macOS-arm64.zip
             dist/VoiceRelayEcho.exe

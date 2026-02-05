@@ -13,7 +13,6 @@ import (
 
 	"github.com/atotto/clipboard"
 	"github.com/getlantern/systray"
-	"github.com/go-vgo/robotgo"
 	"github.com/gorilla/websocket"
 	"gopkg.in/yaml.v3"
 )
@@ -250,23 +249,14 @@ func handleText(text string) {
 		log.Printf("Clipboard error: %v", err)
 	}
 
-	if config.OutputMode == "paste" {
-		// Simulate paste (Cmd+V on Mac, Ctrl+V on Windows)
-		time.Sleep(100 * time.Millisecond) // Small delay for clipboard
-		paste()
-	} else {
-		// Type character by character
-		robotgo.TypeStr(text)
+	// Always use paste mode (type mode removed - requires complex native libs)
+	time.Sleep(100 * time.Millisecond) // Small delay for clipboard
+	if err := paste(); err != nil {
+		log.Printf("Paste error: %v", err)
 	}
 }
 
-func paste() {
-	if runtime.GOOS == "darwin" {
-		robotgo.KeyTap("v", "command")
-	} else {
-		robotgo.KeyTap("v", "ctrl")
-	}
-}
+// paste() is defined in keyboard_darwin.go and keyboard_windows.go
 
 func updateStatus(isConnected bool, status string) {
 	connected = isConnected
@@ -284,21 +274,9 @@ func openConfigFile() {
 	// Ensure config exists
 	saveConfig()
 
-	var cmd string
-	var args []string
-
-	if runtime.GOOS == "darwin" {
-		cmd = "open"
-		args = []string{"-t", configPath}
-	} else if runtime.GOOS == "windows" {
-		cmd = "notepad"
-		args = []string{configPath}
-	} else {
-		cmd = "xdg-open"
-		args = []string{configPath}
+	if err := openFile(configPath); err != nil {
+		log.Printf("Error opening config: %v", err)
 	}
-
-	robotgo.Run(cmd, args...)
 }
 
 func getIcon() []byte {
