@@ -21,7 +21,8 @@ func generateIcon(c color.RGBA) []byte {
 	img := image.NewRGBA(image.Rect(0, 0, size, size))
 
 	// Draw a simple microphone shape
-	centerX, centerY := size/2, size/2
+	centerX := size / 2
+	_ = size / 2 // centerY not needed for this simple icon
 
 	// Mic body (oval)
 	for y := 4; y <= 12; y++ {
