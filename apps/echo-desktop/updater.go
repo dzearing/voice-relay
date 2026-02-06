@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	currentVersion = "1.0.0"
+	currentVersion = "1.1.0"
 	repoOwner      = "dzearing"
 	repoName       = "voice-relay"
 )
