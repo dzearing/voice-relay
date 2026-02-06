@@ -41,11 +41,17 @@ jobs:
           go mod tidy
           CGO_ENABLED=1 GOARCH=arm64 go build -o VoiceRelay
 
+      - name: Generate macOS app icon
+        working-directory: apps/echo-desktop/icons
+        run: |
+          iconutil -c icns AppIcon.iconset -o AppIcon.icns
+
       - name: Create macOS App Bundle
         working-directory: apps/echo-desktop
         run: |
           mkdir -p VoiceRelay.app/Contents/MacOS
           mkdir -p VoiceRelay.app/Contents/Resources
+          cp icons/AppIcon.icns VoiceRelay.app/Contents/Resources/AppIcon.icns
           mv VoiceRelay VoiceRelay.app/Contents/MacOS/
           cat > VoiceRelay.app/Contents/Info.plist << 'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
