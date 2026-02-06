@@ -1,17 +1,18 @@
 //go:build darwin
 
-package main
+package keyboard
 
 import (
 	"os/exec"
 )
 
-func paste() error {
-	// Use osascript to send Cmd+V
+// Paste sends Cmd+V to the active application.
+func Paste() error {
 	script := `tell application "System Events" to keystroke "v" using command down`
 	return exec.Command("osascript", "-e", script).Run()
 }
 
-func openFile(path string) error {
+// OpenFile opens a file in the default text editor.
+func OpenFile(path string) error {
 	return exec.Command("open", "-t", path).Run()
 }

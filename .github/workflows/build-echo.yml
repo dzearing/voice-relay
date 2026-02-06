@@ -1,4 +1,4 @@
-name: Build Echo Desktop
+name: Build Voice Relay
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build-macos:
-    runs-on: macos-latest  # arm64 runner for M1-M4 Macs
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -20,34 +20,48 @@ jobs:
           go-version: '1.21'
           cache: false
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build PWA
+        working-directory: packages/pwa
+        run: |
+          npm install
+          npm run build
+
+      - name: Copy PWA dist to Go embed directory
+        run: |
+          rm -rf apps/echo-desktop/internal/coordinator/pwa_dist/*
+          cp -r packages/pwa/dist/* apps/echo-desktop/internal/coordinator/pwa_dist/
+
       - name: Build macOS (arm64)
         working-directory: apps/echo-desktop
         run: |
           go mod tidy
-          CGO_ENABLED=1 GOARCH=arm64 go build -o VoiceRelayEcho
-          chmod +x VoiceRelayEcho
+          CGO_ENABLED=1 GOARCH=arm64 go build -o VoiceRelay
 
       - name: Create macOS App Bundle
         working-directory: apps/echo-desktop
         run: |
-          mkdir -p VoiceRelayEcho.app/Contents/MacOS
-          mkdir -p VoiceRelayEcho.app/Contents/Resources
-          mv VoiceRelayEcho VoiceRelayEcho.app/Contents/MacOS/
-          cat > VoiceRelayEcho.app/Contents/Info.plist << 'EOF'
+          mkdir -p VoiceRelay.app/Contents/MacOS
+          mkdir -p VoiceRelay.app/Contents/Resources
+          mv VoiceRelay VoiceRelay.app/Contents/MacOS/
+          cat > VoiceRelay.app/Contents/Info.plist << 'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
             <key>CFBundleExecutable</key>
-            <string>VoiceRelayEcho</string>
+            <string>VoiceRelay</string>
             <key>CFBundleIdentifier</key>
-            <string>com.voicerelay.echo</string>
+            <string>com.voicerelay.app</string>
             <key>CFBundleName</key>
-            <string>Voice Relay Echo</string>
+            <string>Voice Relay</string>
             <key>CFBundleVersion</key>
-            <string>1.0</string>
+            <string>2.0</string>
             <key>CFBundleShortVersionString</key>
-            <string>1.0</string>
+            <string>2.0</string>
             <key>LSUIElement</key>
             <true/>
             <key>LSMinimumSystemVersion</key>
@@ -57,12 +71,12 @@ jobs:
           </dict>
           </plist>
           EOF
-          zip -r VoiceRelayEcho-macOS-arm64.zip VoiceRelayEcho.app
+          zip -r VoiceRelay-macOS-arm64.zip VoiceRelay.app
 
       - uses: actions/upload-artifact@v4
         with:
           name: macos-app
-          path: apps/echo-desktop/VoiceRelayEcho-macOS-arm64.zip
+          path: apps/echo-desktop/VoiceRelay-macOS-arm64.zip
 
   build-windows:
     runs-on: windows-latest
@@ -74,6 +88,22 @@ jobs:
           go-version: '1.21'
           cache: false
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build PWA
+        working-directory: packages/pwa
+        run: |
+          npm install
+          npm run build
+
+      - name: Copy PWA dist to Go embed directory
+        shell: bash
+        run: |
+          rm -rf apps/echo-desktop/internal/coordinator/pwa_dist/*
+          cp -r packages/pwa/dist/* apps/echo-desktop/internal/coordinator/pwa_dist/
+
       - name: Install TDM-GCC
         run: |
           choco install mingw -y
@@ -83,12 +113,12 @@ jobs:
         shell: bash
         run: |
           go mod tidy
-          CGO_ENABLED=1 go build -ldflags "-H windowsgui" -o VoiceRelayEcho.exe
+          CGO_ENABLED=1 go build -ldflags "-H windowsgui" -o VoiceRelay.exe
 
       - uses: actions/upload-artifact@v4
         with:
           name: windows-exe
-          path: apps/echo-desktop/VoiceRelayEcho.exe
+          path: apps/echo-desktop/VoiceRelay.exe
 
   release:
     needs: [build-macos, build-windows]
@@ -108,5 +138,5 @@ jobs:
       - uses: softprops/action-gh-release@v1
         with:
           files: |
-            dist/VoiceRelayEcho-macOS-arm64.zip
-            dist/VoiceRelayEcho.exe
+            dist/VoiceRelay-macOS-arm64.zip
+            dist/VoiceRelay.exe

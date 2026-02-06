@@ -6,166 +6,69 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"syscall"
 	"time"
 
-	"github.com/atotto/clipboard"
 	"github.com/getlantern/systray"
-	"github.com/gorilla/websocket"
-	"gopkg.in/yaml.v3"
+
+	"github.com/voice-relay/echo-desktop/internal/client"
+	"github.com/voice-relay/echo-desktop/internal/config"
+	"github.com/voice-relay/echo-desktop/internal/coordinator"
+	"github.com/voice-relay/echo-desktop/internal/llm"
+	"github.com/voice-relay/echo-desktop/internal/setup"
+	"github.com/voice-relay/echo-desktop/internal/stt"
+	"github.com/voice-relay/echo-desktop/internal/tray"
+	"github.com/voice-relay/echo-desktop/internal/updater"
 )
 
-type Config struct {
-	Name           string `yaml:"name"`
-	CoordinatorURL string `yaml:"coordinator_url"`
-	OutputMode     string `yaml:"output_mode"` // "paste" or "type"
-}
-
-type Message struct {
-	Type    string `json:"type"`
-	Name    string `json:"name,omitempty"`
-	Content string `json:"content,omitempty"`
-}
-
 var (
-	config     Config
-	conn       *websocket.Conn
-	connected  bool
-	mStatus    *systray.MenuItem
-	mConnect   *systray.MenuItem
-	mQuit      *systray.MenuItem
-	reconnect  = make(chan bool, 1)
-	lastText   string
-	lastTextAt time.Time
+	cfg        *config.Config
+	echoClient *client.Client
+	sttEngine  *stt.Engine
+	llmEngine  *llm.Engine
 )
 
 func main() {
-	loadConfig()
+	cfg = config.Load()
+
+	// First-run setup wizard
+	if !cfg.SetupComplete {
+		log.Println("Running setup wizard...")
+		if err := setup.RunWizard(cfg); err != nil {
+			log.Printf("Setup wizard error: %v", err)
+		}
+	}
+
 	systray.Run(onReady, onExit)
 }
 
-func getConfigPath() string {
-	if runtime.GOOS == "darwin" {
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, "Library", "Application Support", "VoiceRelayEcho", "config.yaml")
-	} else if runtime.GOOS == "windows" {
-		appData := os.Getenv("APPDATA")
-		return filepath.Join(appData, "VoiceRelayEcho", "config.yaml")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "voice-relay-echo", "config.yaml")
-}
-
-func loadConfig() {
-	configPath := getConfigPath()
-
-	// Create default config if not exists
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		config = Config{
-			Name:           getDefaultName(),
-			CoordinatorURL: "ws://localhost:53937/ws",
-			OutputMode:     "paste",
-		}
-		saveConfig()
-		return
-	}
-
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		log.Printf("Error reading config: %v", err)
-		config = Config{
-			Name:           getDefaultName(),
-			CoordinatorURL: "ws://localhost:53937/ws",
-			OutputMode:     "paste",
-		}
-		return
-	}
-
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		log.Printf("Error parsing config: %v", err)
-	}
-
-	if config.Name == "" {
-		config.Name = getDefaultName()
-	}
-	if config.CoordinatorURL == "" {
-		config.CoordinatorURL = "ws://localhost:53937/ws"
-	}
-	if config.OutputMode == "" {
-		config.OutputMode = "paste"
-	}
-}
-
-func saveConfig() {
-	configPath := getConfigPath()
-	dir := filepath.Dir(configPath)
-	os.MkdirAll(dir, 0755)
-
-	data, _ := yaml.Marshal(&config)
-	os.WriteFile(configPath, data, 0644)
-}
-
-func getDefaultName() string {
-	hostname, err := os.Hostname()
-	if err != nil {
-		return "echo-client"
-	}
-	return hostname
-}
-
 func onReady() {
-	// Set icon based on platform
-	systray.SetIcon(getIcon())
-	systray.SetTitle("") // Empty for Mac menu bar
-	systray.SetTooltip("Voice Relay Echo")
+	// Start coordinator if configured
+	if cfg.RunAsCoordinator {
+		// Set the URL before starting so the client knows where to connect
+		cfg.CoordinatorURL = fmt.Sprintf("ws://localhost:%d/ws", cfg.Port)
+		go initCoordinator()
+	}
 
-	// Menu items
-	mStatus = systray.AddMenuItem("Disconnected", "Connection status")
-	mStatus.Disable()
+	// Create echo client
+	echoClient = client.New(cfg.Name, cfg.CoordinatorURL, tray.UpdateStatus)
 
-	systray.AddSeparator()
+	// Setup systray menu
+	tray.SetupMenu(cfg, tray.Callbacks{
+		OnReconnect: func() { echoClient.TriggerReconnect() },
+		OnQuit:      func() { echoClient.Close() },
+	})
 
-	mName := systray.AddMenuItem(fmt.Sprintf("Device: %s", config.Name), "Device name")
-	mName.Disable()
+	// Check for updates in background
+	go updater.CheckForUpdates()
 
-	mConnect = systray.AddMenuItem("Reconnect", "Reconnect to coordinator")
-
-	systray.AddSeparator()
-
-	mConfig := systray.AddMenuItem("Open Config...", "Open configuration file")
-	mUpdate := systray.AddMenuItem("Check for Updates", "Check for new version")
-
-	systray.AddSeparator()
-
-	mVersion := systray.AddMenuItem(fmt.Sprintf("Version %s", getVersion()), "Current version")
-	mVersion.Disable()
-
-	systray.AddSeparator()
-
-	mQuit = systray.AddMenuItem("Quit", "Quit Voice Relay Echo")
-
-	// Handle menu clicks
+	// Start echo client connection manager (with small delay if coordinator is starting)
 	go func() {
-		for {
-			select {
-			case <-mConnect.ClickedCh:
-				reconnect <- true
-			case <-mConfig.ClickedCh:
-				openConfigFile()
-			case <-mUpdate.ClickedCh:
-				go checkForUpdates()
-			case <-mQuit.ClickedCh:
-				systray.Quit()
-			}
+		if cfg.RunAsCoordinator {
+			time.Sleep(500 * time.Millisecond)
 		}
+		echoClient.Run()
 	}()
-
-	// Check for updates on startup (in background)
-	go checkForUpdates()
-
-	// Start connection manager
-	go connectionManager()
 
 	// Handle OS signals
 	sigChan := make(chan os.Signal, 1)
@@ -176,126 +79,69 @@ func onReady() {
 	}()
 }
 
-func onExit() {
-	if conn != nil {
-		conn.Close()
-	}
-}
+func initCoordinator() {
+	dataDir := config.Dir()
+	modelsDir := filepath.Join(dataDir, "models")
+	binDir := filepath.Join(dataDir, "bin")
 
-func connectionManager() {
-	for {
-		connect()
-
-		// Wait for reconnect signal or timeout
-		select {
-		case <-reconnect:
-			log.Println("Manual reconnect requested")
-		case <-time.After(5 * time.Second):
-			// Auto reconnect after delay
-		}
-	}
-}
-
-func connect() {
-	updateStatus(false, "Connecting...")
-
-	var err error
-	conn, _, err = websocket.DefaultDialer.Dial(config.CoordinatorURL, nil)
+	// Initialize STT engine
+	modelPath, err := stt.EnsureModel(modelsDir, cfg.WhisperModel)
 	if err != nil {
-		log.Printf("Connection failed: %v", err)
-		updateStatus(false, "Connection failed")
-		return
-	}
-
-	// Register
-	msg := Message{Type: "register", Name: config.Name}
-	if err := conn.WriteJSON(msg); err != nil {
-		log.Printf("Registration failed: %v", err)
-		conn.Close()
-		updateStatus(false, "Registration failed")
-		return
-	}
-
-	updateStatus(true, fmt.Sprintf("Connected as %s", config.Name))
-	log.Printf("Connected as %s", config.Name)
-
-	// Message loop
-	for {
-		var msg Message
-		if err := conn.ReadJSON(&msg); err != nil {
-			log.Printf("Read error: %v", err)
-			break
-		}
-
-		switch msg.Type {
-		case "registered":
-			log.Printf("Registered as: %s", msg.Name)
-		case "text":
-			handleText(msg.Content)
+		log.Printf("STT model not available: %v", err)
+	} else {
+		serverPath, err := stt.EnsureServer(binDir)
+		if err != nil {
+			log.Printf("whisper-server not available: %v", err)
+		} else {
+			engine, err := stt.NewEngine(modelPath, serverPath, 8178)
+			if err != nil {
+				log.Printf("Failed to initialize STT engine: %v", err)
+			} else {
+				sttEngine = engine
+				coordinator.SetSTTFunc(func(audioData []byte, filename string) (string, error) {
+					return sttEngine.Transcribe(audioData, filename)
+				})
+			}
 		}
 	}
 
-	conn.Close()
-	updateStatus(false, "Disconnected")
-}
-
-func handleText(text string) {
-	if text == "" {
-		return
+	// Initialize LLM engine
+	if cfg.LLMEnabled {
+		llmModelPath, err := llm.EnsureModel(modelsDir, cfg.LLMModel)
+		if err != nil {
+			log.Printf("LLM model not available: %v", err)
+		} else {
+			llmServerPath, err := llm.EnsureServer(binDir)
+			if err != nil {
+				log.Printf("llama-server not available: %v", err)
+			} else {
+				engine, err := llm.NewEngine(llmModelPath, llmServerPath, 8179)
+				if err != nil {
+					log.Printf("Failed to initialize LLM engine: %v", err)
+				} else {
+					llmEngine = engine
+					coordinator.SetLLMFunc(func(rawText string) (string, error) {
+						return llmEngine.CleanupText(rawText)
+					})
+				}
+			}
+		}
 	}
 
-	log.Printf("Received: %s", text)
-
-	// Debounce duplicate messages
-	if text == lastText && time.Since(lastTextAt) < 2*time.Second {
-		log.Println("Ignoring duplicate message")
-		return
-	}
-	lastText = text
-	lastTextAt = time.Now()
-
-	// Copy to clipboard
-	if err := clipboard.WriteAll(text); err != nil {
-		log.Printf("Clipboard error: %v", err)
-	}
-
-	// Always use paste mode (type mode removed - requires complex native libs)
-	time.Sleep(100 * time.Millisecond) // Small delay for clipboard
-	if err := paste(); err != nil {
-		log.Printf("Paste error: %v", err)
+	// Start coordinator HTTP server (blocks)
+	if err := coordinator.Start(cfg.Port); err != nil {
+		log.Printf("Coordinator failed to start: %v", err)
 	}
 }
 
-// paste() is defined in keyboard_darwin.go and keyboard_windows.go
-
-func updateStatus(isConnected bool, status string) {
-	connected = isConnected
-	if mStatus != nil {
-		mStatus.SetTitle(status)
+func onExit() {
+	if echoClient != nil {
+		echoClient.Close()
 	}
-
-	// Update icon based on connection status
-	systray.SetIcon(getIcon())
-}
-
-func openConfigFile() {
-	configPath := getConfigPath()
-
-	// Ensure config exists
-	saveConfig()
-
-	if err := openFile(configPath); err != nil {
-		log.Printf("Error opening config: %v", err)
+	if sttEngine != nil {
+		sttEngine.Close()
+	}
+	if llmEngine != nil {
+		llmEngine.Close()
 	}
 }
-
-func getIcon() []byte {
-	if connected {
-		return iconConnected
-	}
-	return iconDisconnected
-}
-
-// Icons are generated in icon.go
-var iconConnected []byte
-var iconDisconnected []byte

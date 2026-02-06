@@ -1,4 +1,4 @@
-package main
+package updater
 
 import (
 	"archive/zip"
@@ -15,12 +15,12 @@ import (
 )
 
 const (
-	currentVersion = "1.1.0"
+	CurrentVersion = "1.1.0"
 	repoOwner      = "dzearing"
 	repoName       = "voice-relay"
 )
 
-type GitHubRelease struct {
+type gitHubRelease struct {
 	TagName string `json:"tag_name"`
 	Assets  []struct {
 		Name               string `json:"name"`
@@ -28,7 +28,8 @@ type GitHubRelease struct {
 	} `json:"assets"`
 }
 
-func checkForUpdates() {
+// CheckForUpdates checks GitHub for a newer release and installs it if found.
+func CheckForUpdates() {
 	log.Println("Checking for updates...")
 
 	release, err := getLatestRelease()
@@ -38,14 +39,13 @@ func checkForUpdates() {
 	}
 
 	latestVersion := strings.TrimPrefix(release.TagName, "v")
-	if latestVersion == currentVersion {
-		log.Printf("Already on latest version (%s)", currentVersion)
+	if latestVersion == CurrentVersion {
+		log.Printf("Already on latest version (%s)", CurrentVersion)
 		return
 	}
 
-	log.Printf("New version available: %s (current: %s)", latestVersion, currentVersion)
+	log.Printf("New version available: %s (current: %s)", latestVersion, CurrentVersion)
 
-	// Find the right asset for this platform
 	assetName := getAssetName()
 	var downloadURL string
 	for _, asset := range release.Assets {
@@ -60,7 +60,6 @@ func checkForUpdates() {
 		return
 	}
 
-	// Download and install
 	if err := downloadAndInstall(downloadURL, assetName); err != nil {
 		log.Printf("Update failed: %v", err)
 		return
@@ -69,7 +68,7 @@ func checkForUpdates() {
 	log.Println("Update installed! Please restart the app.")
 }
 
-func getLatestRelease() (*GitHubRelease, error) {
+func getLatestRelease() (*gitHubRelease, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", repoOwner, repoName)
 
 	resp, err := http.Get(url)
@@ -82,7 +81,7 @@ func getLatestRelease() (*GitHubRelease, error) {
 		return nil, fmt.Errorf("GitHub API returned %d", resp.StatusCode)
 	}
 
-	var release GitHubRelease
+	var release gitHubRelease
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
 		return nil, err
 	}
@@ -92,9 +91,9 @@ func getLatestRelease() (*GitHubRelease, error) {
 
 func getAssetName() string {
 	if runtime.GOOS == "darwin" {
-		return "VoiceRelayEcho-macOS-arm64.zip"
+		return "VoiceRelay-macOS-arm64.zip"
 	}
-	return "VoiceRelayEcho.exe"
+	return "VoiceRelay.exe"
 }
 
 func downloadAndInstall(url, assetName string) error {
@@ -123,17 +122,13 @@ func downloadAndInstall(url, assetName string) error {
 	}
 
 	if runtime.GOOS == "darwin" {
-		// macOS: Extract from zip and replace app bundle
 		return installMacOS(data, execPath)
 	}
 
-	// Windows: Replace exe directly
 	return installWindows(data, execPath)
 }
 
 func installMacOS(zipData []byte, execPath string) error {
-	// Find the .app bundle path
-	// execPath is like /Applications/VoiceRelayEcho.app/Contents/MacOS/VoiceRelayEcho
 	appPath := execPath
 	for i := 0; i < 3; i++ {
 		appPath = filepath.Dir(appPath)
@@ -143,7 +138,6 @@ func installMacOS(zipData []byte, execPath string) error {
 		return fmt.Errorf("not running from .app bundle")
 	}
 
-	// Extract zip to temp location
 	zipReader, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
 	if err != nil {
 		return err
@@ -183,7 +177,6 @@ func installMacOS(zipData []byte, execPath string) error {
 		}
 	}
 
-	// Replace the app bundle
 	backupPath := appPath + ".backup"
 	os.RemoveAll(backupPath)
 
@@ -191,9 +184,8 @@ func installMacOS(zipData []byte, execPath string) error {
 		return err
 	}
 
-	newAppPath := filepath.Join(tempDir, "VoiceRelayEcho.app")
+	newAppPath := filepath.Join(tempDir, "VoiceRelay.app")
 	if err := os.Rename(newAppPath, appPath); err != nil {
-		// Restore backup on failure
 		os.Rename(backupPath, appPath)
 		return err
 	}
@@ -205,7 +197,6 @@ func installMacOS(zipData []byte, execPath string) error {
 }
 
 func installWindows(exeData []byte, execPath string) error {
-	// Rename current exe to .old
 	oldPath := execPath + ".old"
 	os.Remove(oldPath)
 
@@ -213,18 +204,10 @@ func installWindows(exeData []byte, execPath string) error {
 		return err
 	}
 
-	// Write new exe
 	if err := os.WriteFile(execPath, exeData, 0755); err != nil {
-		// Restore old exe on failure
 		os.Rename(oldPath, execPath)
 		return err
 	}
 
-	// Schedule old exe deletion (will happen on next restart)
-	// Windows won't let us delete the running exe
 	return nil
-}
-
-func getVersion() string {
-	return currentVersion
 }
