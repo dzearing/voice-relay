@@ -134,6 +134,12 @@ func onReady() {
 	systray.AddSeparator()
 
 	mConfig := systray.AddMenuItem("Open Config...", "Open configuration file")
+	mUpdate := systray.AddMenuItem("Check for Updates", "Check for new version")
+
+	systray.AddSeparator()
+
+	mVersion := systray.AddMenuItem(fmt.Sprintf("Version %s", getVersion()), "Current version")
+	mVersion.Disable()
 
 	systray.AddSeparator()
 
@@ -147,11 +153,16 @@ func onReady() {
 				reconnect <- true
 			case <-mConfig.ClickedCh:
 				openConfigFile()
+			case <-mUpdate.ClickedCh:
+				go checkForUpdates()
 			case <-mQuit.ClickedCh:
 				systray.Quit()
 			}
 		}
 	}()
+
+	// Check for updates on startup (in background)
+	go checkForUpdates()
 
 	// Start connection manager
 	go connectionManager()
