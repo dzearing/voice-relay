@@ -59,9 +59,9 @@ jobs:
             <key>CFBundleName</key>
             <string>Voice Relay</string>
             <key>CFBundleVersion</key>
-            <string>2.0</string>
+            <string>${GITHUB_REF_NAME#v}</string>
             <key>CFBundleShortVersionString</key>
-            <string>2.0</string>
+            <string>${GITHUB_REF_NAME#v}</string>
             <key>LSUIElement</key>
             <true/>
             <key>LSMinimumSystemVersion</key>
@@ -71,6 +71,7 @@ jobs:
           </dict>
           </plist>
           EOF
+          codesign --force --deep -s - VoiceRelay.app
           zip -r VoiceRelay-macOS-arm64.zip VoiceRelay.app
 
       - uses: actions/upload-artifact@v4
