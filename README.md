@@ -2,144 +2,96 @@
 
 Dictate on your phone, type on your computer. A local speech-to-text system that transcribes audio and types it wherever your cursor is.
 
-## Quick Start (Users)
+## Quick Start
 
-### 1. Download Echo Client
-
-Install the Echo client on any computer where you want text to appear:
+### 1. Download Voice Relay
 
 | Platform | Download |
 |----------|----------|
-| **macOS (M1-M4)** | [VoiceRelayEcho-macOS-arm64.zip](https://github.com/dzearing/voice-relay/releases/latest/download/VoiceRelayEcho-macOS-arm64.zip) |
-| **Windows** | [VoiceRelayEcho.exe](https://github.com/dzearing/voice-relay/releases/latest/download/VoiceRelayEcho.exe) |
+| **macOS (M1-M4)** | [VoiceRelay-macOS-arm64.zip](https://github.com/dzearing/voice-relay/releases/latest/download/VoiceRelay-macOS-arm64.zip) |
+| **Windows** | [VoiceRelay.exe](https://github.com/dzearing/voice-relay/releases/latest/download/VoiceRelay.exe) |
 
-#### macOS Setup
-1. Download and unzip `VoiceRelayEcho-macOS.zip`
-2. Move `VoiceRelayEcho.app` to Applications
+#### macOS
+1. Download and unzip
+2. Move `VoiceRelay.app` to Applications
 3. Open it (right-click → Open if blocked by Gatekeeper)
-4. Grant Accessibility permissions when prompted (System Settings → Privacy & Security → Accessibility)
-5. Click the menu bar icon to configure
+4. Grant Accessibility permissions (System Settings → Privacy & Security → Accessibility)
 
-#### Windows Setup
-1. Download `VoiceRelayEcho.exe`
+#### Windows
+1. Download `VoiceRelay.exe`
 2. Run it (click "More info" → "Run anyway" if SmartScreen blocks it)
 3. The app appears in your system tray
-4. Right-click the tray icon to configure
 
-### 2. Configure Echo Client
+### 2. First-Run Setup
 
-On first run, a config file is created. Click **"Open Config..."** in the menu to edit:
+On first launch, a setup wizard walks you through configuration:
 
-```yaml
-name: my-laptop                              # Unique name for this device
-coordinator_url: ws://100.x.x.x:53937/ws     # Your coordinator's Tailscale IP
-output_mode: paste                           # "paste" (instant) or "type" (slow)
-```
+- **Coordinator mode**: Choose whether this machine runs the coordinator (handles STT + serves the web UI)
+- **Device name**: Identifies this machine to the coordinator
+- **Coordinator URL**: If not running as coordinator, enter the coordinator's address
 
-After editing, click **"Reconnect"** to apply changes.
+[Tailscale](https://tailscale.com) is recommended for easy device-to-device networking. The wizard will detect it if installed.
 
-### 3. Access the PWA
+### 3. Use It
 
-Open the Voice Relay web app on your phone:
-
-```
-https://your-tailscale-hostname:53937
-```
-
-Or use Tailscale Funnel for a public HTTPS URL. Add to your home screen for the best experience.
-
-### 4. Use It
-
-1. Select your target device in the PWA
-2. Tap the microphone button to record
-3. Tap the send button when done
-4. Text appears wherever your cursor is on the target device
-
----
-
-## Server Setup (Self-Hosting)
-
-To run your own Voice Relay server, you'll need a machine running the coordinator, STT service, and Ollama.
-
-### Prerequisites
-
-- Node.js 18+
-- Python 3.10+
-- [Ollama](https://ollama.ai) with a model (recommended: `qwen3:0.6b`)
-- [Tailscale](https://tailscale.com) for secure networking
-
-### Installation
-
-```bash
-# Clone the repo
-git clone https://github.com/dzearing/voice-relay.git
-cd voice-relay
-
-# Install Node.js dependencies
-npm install
-
-# Setup Python STT service
-cd packages/stt
-python -m venv venv
-venv\Scripts\activate      # Windows
-# source venv/bin/activate # Mac/Linux
-pip install -r requirements.txt
-cd ../..
-
-# Pull Ollama model
-ollama pull qwen3:0.6b
-```
-
-### Running Services
-
-**Terminal 1 - STT Service:**
-```bash
-cd packages/stt
-venv\Scripts\activate
-uvicorn main:app --host 0.0.0.0 --port 51741
-```
-
-**Terminal 2 - Coordinator:**
-```bash
-npm run dev:coordinator
-```
-
-**Terminal 3 - Echo Service (optional, for the server machine):**
-```bash
-npm run dev:echo
-```
-
-### Enable HTTPS (Required for PWA)
-
-Use Tailscale Funnel for valid HTTPS:
-```bash
-tailscale funnel 53937
-```
-
----
+1. Open the web UI on your phone at `http://<coordinator-ip>:53937`
+2. Select your target device
+3. Tap the microphone button to record
+4. Tap send — text appears wherever your cursor is on the target device
 
 ## Architecture
 
+Voice Relay is a single Go binary. No Node.js, Python, or Ollama required.
+
 ```
-┌─────────┐   1. audio   ┌─────────────┐   4. text   ┌─────────────┐
-│   PWA   │ ──────────►  │ Coordinator │ ──────────► │ Echo Client │
-│ (phone) │              │             │             │  (desktop)  │
-└─────────┘              └─┬┬───────┬┬─┘             └─────────────┘
-         2. speech to text │^       |^ 3. raw to cleaned text 
-                           ││       ││
-                           ▼│       ▼│
-                   ┌─────────┐     ┌─────────┐
-                   │   STT   │     │ Ollama  │
-                   └─────────┘     └─────────┘             
+VoiceRelay (single Go binary)
+├── Echo Client    — WebSocket → clipboard → paste
+├── Systray UI     — connection status, menu
+├── Coordinator    — opt-in HTTP/WS server
+│   ├── PWA        — embedded web UI for phone
+│   ├── STT        — whisper.cpp (auto-downloaded)
+│   └── LLM        — llama.cpp + Qwen3-4B (auto-downloaded)
+├── Setup Wizard   — native dialogs
+└── Auto-updater   — GitHub releases
 ```
 
-**Flow:** PWA sends audio → Coordinator → STT transcribes → Coordinator → Ollama cleans → Coordinator → Echo types
+**Flow:** PWA records audio → Coordinator → whisper.cpp transcribes → Qwen3 cleans up → Echo client pastes
 
-## Components
+## Configuration
 
-| Component | Tech | Description |
-|-----------|------|-------------|
-| **Coordinator** | Node.js/Express | Routes audio → STT → Ollama → Echo clients |
-| **STT Service** | Python/faster-whisper | Local speech-to-text |
-| **Echo Client** | Go | System tray app that types/pastes text |
-| **PWA** | TypeScript/Vite | Mobile recording interface |
+Config is stored at:
+- **macOS**: `~/Library/Application Support/VoiceRelay/config.yaml`
+- **Windows**: `%APPDATA%\VoiceRelay\config.yaml`
+- **Linux**: `~/.config/voice-relay/config.yaml`
+
+```yaml
+name: my-laptop                    # Device name
+coordinator_url: ws://100.x.x.x:53937/ws  # Coordinator address
+output_mode: paste                 # "paste" (instant Ctrl/Cmd+V)
+
+# Coordinator mode (opt-in)
+run_as_coordinator: false
+port: 53937
+whisper_model: base                # tiny, base, or small
+llm_model: qwen3-4b               # Text cleanup model
+llm_enabled: true
+```
+
+Click **"Open Config..."** in the tray menu to edit, then **"Reconnect"** to apply.
+
+## Building from Source
+
+Requires Go 1.21+ and Node.js 20+ (for PWA build).
+
+```bash
+cd apps/echo-desktop
+./build.sh
+```
+
+## Permissions
+
+### macOS
+Grant **Accessibility** permissions: System Settings → Privacy & Security → Accessibility
+
+### Windows
+May need to run as Administrator for some applications.
