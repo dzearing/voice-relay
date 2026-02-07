@@ -78,8 +78,9 @@ func ensureAccessibility() {
 		err := zenity.Question(
 			"Voice Relay needs Accessibility permission to paste\n"+
 				"text into your apps.\n\n"+
-				"Click \"Open Settings\" to go to System Settings,\n"+
-				"then enable Voice Relay in the Accessibility list.",
+				"Click \"Open Settings\" to go there directly, or navigate to:\n"+
+				"System Settings → Privacy & Security → Accessibility\n\n"+
+				"Then toggle Voice Relay on in the list.",
 			zenity.Title("Accessibility Permission Required"),
 			zenity.OKLabel("Open Settings"),
 			zenity.ExtraButton("I've Enabled It"),

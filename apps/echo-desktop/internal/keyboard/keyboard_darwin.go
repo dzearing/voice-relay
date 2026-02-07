@@ -33,7 +33,17 @@ return (current application's AXIsProcessTrusted()) as boolean`
 
 // OpenAccessibilitySettings opens System Settings to the Accessibility pane.
 func OpenAccessibilitySettings() {
-	exec.Command("open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility").Start()
+	// AppleScript is the most reliable way to open the right pane across macOS versions
+	script := `tell application "System Settings"
+		activate
+		delay 0.5
+		reveal anchor "Privacy_Accessibility" of pane id "com.apple.settings.PrivacySecurity"
+	end tell`
+	err := exec.Command("osascript", "-e", script).Run()
+	if err != nil {
+		// Fallback: try the URL scheme (works on older macOS)
+		exec.Command("open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility").Start()
+	}
 }
 
 // CheckAccessibility is a no-op on macOS — use HasAccessibility + prompt flow instead.
