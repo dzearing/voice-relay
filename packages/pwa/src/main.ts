@@ -1,6 +1,5 @@
 // Elements
 const machineSelect = document.getElementById("machine") as HTMLSelectElement;
-const refreshBtn = document.getElementById("refresh-btn") as HTMLButtonElement;
 const mainBtn = document.getElementById("main-btn") as HTMLButtonElement;
 const cancelBtn = document.getElementById("cancel-btn") as HTMLButtonElement;
 const statusEl = document.getElementById("status") as HTMLDivElement;
@@ -131,20 +130,6 @@ function updateMachineList(machines: { name: string }[]) {
   const saved = loadTarget();
   if (saved && Array.from(machineSelect.options).some(o => o.value === saved)) {
     machineSelect.value = saved;
-  }
-}
-
-// Fetch available machines (fallback)
-async function loadMachines() {
-  try {
-    machineSelect.innerHTML = '<option value="">Loading...</option>';
-
-    const response = await fetch(`${API_BASE}/machines`);
-    const machines = await response.json();
-    updateMachineList(machines);
-  } catch (error) {
-    machineSelect.innerHTML = '<option value="">Connection failed</option>';
-    setStatus("Connection failed", "error");
   }
 }
 
@@ -427,8 +412,6 @@ cancelBtn.addEventListener("click", (e) => {
   e.preventDefault();
   cancelRecording();
 });
-
-refreshBtn.addEventListener("click", loadMachines);
 
 // Open results overlay
 viewResultsBtn.addEventListener("click", openOverlay);

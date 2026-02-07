@@ -237,25 +237,6 @@ header h1 {
   border-color: var(--accent-cyan);
 }
 
-#refresh-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 48px;
-  height: 48px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--bg-glass-border);
-  border-radius: 10px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-#refresh-btn:active {
-  transform: scale(0.95);
-  background: var(--bg-glass);
-}
-
 /* Main content — use all remaining space, center the button */
 main {
   flex: 1;

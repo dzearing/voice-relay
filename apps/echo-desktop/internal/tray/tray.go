@@ -2,6 +2,7 @@ package tray
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 
@@ -148,7 +149,12 @@ func UpdateStatus(isConnected bool, status string) {
 	}
 
 	if isConnected {
-		systray.SetTemplateIcon(icons.TemplateIconConnected(), icons.IconConnected())
+		if runtime.GOOS == "darwin" {
+			// Use SetIcon (not template) so the blue color is visible in the menu bar
+			systray.SetIcon(icons.IconConnected())
+		} else {
+			systray.SetTemplateIcon(icons.TemplateIconConnected(), icons.IconConnected())
+		}
 	} else {
 		systray.SetTemplateIcon(icons.TemplateIconDisconnected(), icons.IconDisconnected())
 	}
