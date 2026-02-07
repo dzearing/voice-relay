@@ -51,11 +51,11 @@ jobs:
       - name: Create macOS App Bundle
         working-directory: apps/echo-desktop
         run: |
-          mkdir -p VoiceRelay.app/Contents/MacOS
-          mkdir -p VoiceRelay.app/Contents/Resources
-          cp icons/AppIcon.icns VoiceRelay.app/Contents/Resources/AppIcon.icns
-          mv VoiceRelay VoiceRelay.app/Contents/MacOS/
-          cat > VoiceRelay.app/Contents/Info.plist << 'EOF'
+          mkdir -p "Voice Relay.app/Contents/MacOS"
+          mkdir -p "Voice Relay.app/Contents/Resources"
+          cp icons/AppIcon.icns "Voice Relay.app/Contents/Resources/AppIcon.icns"
+          mv VoiceRelay "Voice Relay.app/Contents/MacOS/"
+          cat > "Voice Relay.app/Contents/Info.plist" << 'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -79,8 +79,8 @@ jobs:
           </dict>
           </plist>
           EOF
-          codesign --force --deep -s - VoiceRelay.app
-          zip -r VoiceRelay-macOS-arm64.zip VoiceRelay.app
+          codesign --force --deep -s - "Voice Relay.app"
+          zip -r VoiceRelay-macOS-arm64.zip "Voice Relay.app"
 
       - uses: actions/upload-artifact@v4
         with:

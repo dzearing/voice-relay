@@ -2,6 +2,7 @@ package tray
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/getlantern/systray"
@@ -20,13 +21,13 @@ type Callbacks struct {
 }
 
 var (
-	mStatus *systray.MenuItem
+	mStatus   *systray.MenuItem
 	connected bool
 )
 
 // SetupMenu initializes the systray menu items.
 func SetupMenu(cfg *config.Config, cb Callbacks) {
-	systray.SetIcon(icons.IconDisconnected())
+	systray.SetTemplateIcon(icons.TemplateIconDisconnected(), icons.IconDisconnected())
 	systray.SetTitle("")
 	systray.SetTooltip("Voice Relay")
 
@@ -38,14 +39,13 @@ func SetupMenu(cfg *config.Config, cb Callbacks) {
 	mName := systray.AddMenuItem(fmt.Sprintf("Device: %s", cfg.Name), "Device name")
 	mName.Disable()
 
-	// Coordinator mode info — show URL after coordinator starts
+	// Connection info and QR code
 	var mQR *systray.MenuItem
-	var mURL *systray.MenuItem
 	if cfg.RunAsCoordinator {
 		systray.AddSeparator()
 		mCoord := systray.AddMenuItem(fmt.Sprintf("Coordinator: Running on :%d", cfg.Port), "Coordinator status")
 		mCoord.Disable()
-		mURL = systray.AddMenuItem("URL: detecting...", "Coordinator URL")
+		mURL := systray.AddMenuItem("URL: detecting...", "Coordinator URL")
 		mURL.Disable()
 		mQR = systray.AddMenuItem("Show QR Code", "Open QR code to connect your phone")
 
@@ -64,9 +64,17 @@ func SetupMenu(cfg *config.Config, cb Callbacks) {
 			}
 			mURL.SetTitle("localhost only")
 		}()
+	} else {
+		// Client mode — show QR code option to open coordinator's connect page
+		systray.AddSeparator()
+		mQR = systray.AddMenuItem("Show QR Code", "Open QR code to connect your phone")
 	}
 
-	mConnect := systray.AddMenuItem("Reconnect", "Reconnect to coordinator")
+	connectLabel := "Reconnect"
+	if !cfg.RunAsCoordinator {
+		connectLabel = "Connect..."
+	}
+	mConnect := systray.AddMenuItem(connectLabel, "Connect to coordinator")
 
 	systray.AddSeparator()
 
@@ -83,7 +91,7 @@ func SetupMenu(cfg *config.Config, cb Callbacks) {
 	mQuit := systray.AddMenuItem("Quit", "Quit Voice Relay")
 
 	go func() {
-		// Create a nil channel for QR if not in coordinator mode (select on nil channel blocks forever)
+		// Create a nil channel for QR if not set (select on nil channel blocks forever)
 		var qrCh <-chan struct{}
 		if mQR != nil {
 			qrCh = mQR.ClickedCh
@@ -92,7 +100,14 @@ func SetupMenu(cfg *config.Config, cb Callbacks) {
 		for {
 			select {
 			case <-qrCh:
-				keyboard.OpenURL(fmt.Sprintf("http://localhost:%d/connect", cfg.Port))
+				// Derive URL at click time so it reflects any reconnect changes
+				var qrURL string
+				if cfg.RunAsCoordinator {
+					qrURL = fmt.Sprintf("http://localhost:%d/connect", cfg.Port)
+				} else {
+					qrURL = wsToHTTP(cfg.CoordinatorURL) + "/connect"
+				}
+				keyboard.OpenURL(qrURL)
 			case <-mConnect.ClickedCh:
 				if cb.OnReconnect != nil {
 					cb.OnReconnect()
@@ -117,6 +132,14 @@ func SetupMenu(cfg *config.Config, cb Callbacks) {
 	}()
 }
 
+// wsToHTTP converts a WebSocket URL to an HTTP URL (strips /ws path suffix).
+func wsToHTTP(wsURL string) string {
+	u := strings.TrimSuffix(wsURL, "/ws")
+	u = strings.Replace(u, "wss://", "https://", 1)
+	u = strings.Replace(u, "ws://", "http://", 1)
+	return u
+}
+
 // UpdateStatus updates the systray icon and status text.
 func UpdateStatus(isConnected bool, status string) {
 	connected = isConnected
@@ -125,8 +148,8 @@ func UpdateStatus(isConnected bool, status string) {
 	}
 
 	if isConnected {
-		systray.SetIcon(icons.IconConnected())
+		systray.SetTemplateIcon(icons.TemplateIconConnected(), icons.IconConnected())
 	} else {
-		systray.SetIcon(icons.IconDisconnected())
+		systray.SetTemplateIcon(icons.TemplateIconDisconnected(), icons.IconDisconnected())
 	}
 }

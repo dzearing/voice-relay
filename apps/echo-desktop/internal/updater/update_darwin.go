@@ -97,9 +97,9 @@ func applyUpdateDarwin(info *releaseInfo) error {
 	}
 
 	// Find the extracted .app bundle
-	newAppPath := filepath.Join(tempDir, "VoiceRelay.app")
+	newAppPath := filepath.Join(tempDir, "Voice Relay.app")
 	if _, err := os.Stat(newAppPath); err != nil {
-		return fmt.Errorf("extracted zip does not contain VoiceRelay.app")
+		return fmt.Errorf("extracted zip does not contain Voice Relay.app")
 	}
 
 	// Swap: backup current → move new into place → remove backup

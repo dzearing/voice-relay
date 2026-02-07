@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/getlantern/systray"
+	"github.com/ncruces/zenity"
 
 	"github.com/voice-relay/echo-desktop/internal/client"
 	"github.com/voice-relay/echo-desktop/internal/config"
@@ -100,7 +101,7 @@ func onReady() {
 
 	// Setup systray menu
 	tray.SetupMenu(cfg, tray.Callbacks{
-		OnReconnect: func() { echoClient.TriggerReconnect() },
+		OnReconnect: handleReconnect,
 		OnQuit:      func() { echoClient.Close() },
 	})
 
@@ -122,6 +123,41 @@ func onReady() {
 		<-sigChan
 		systray.Quit()
 	}()
+}
+
+func handleReconnect() {
+	// Coordinator mode: just reconnect to localhost, no dialog needed
+	if cfg.RunAsCoordinator {
+		echoClient.TriggerReconnect()
+		return
+	}
+
+	// Client mode: show a dialog to enter a connection code
+	code, err := zenity.Entry(
+		"Enter the connection code from your coordinator:\n\n"+
+			"Right-click the Voice Relay icon on the coordinator\n"+
+			"machine and look for the code in the menu.\n\n"+
+			"You can also enter a full URL if you have one.",
+		zenity.Title("Connect to Coordinator"),
+		zenity.EntryText(""),
+	)
+	if err != nil || code == "" {
+		return
+	}
+
+	wsURL := setup.ResolveCoordinatorURL(code)
+	if wsURL == "" {
+		zenity.Warning(
+			fmt.Sprintf("Could not connect with code: %s", code),
+			zenity.Title("Connection Failed"),
+		)
+		return
+	}
+
+	cfg.CoordinatorURL = wsURL
+	cfg.Save()
+	echoClient.CoordinatorURL = wsURL
+	echoClient.TriggerReconnect()
 }
 
 func initCoordinator() {

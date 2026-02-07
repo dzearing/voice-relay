@@ -22,6 +22,11 @@ VARIANTS = {
     "connected": (0, 212, 255, 255),     # cyan #00d4ff
     "disconnected": (128, 128, 128, 255), # gray #808080
 }
+# Template icons for macOS dark/light mode (black shape, macOS tints automatically)
+TEMPLATE_VARIANTS = {
+    "connected_template": (0, 0, 0, 255),
+    "disconnected_template": (0, 0, 0, 255),
+}
 TRAY_SIZES = [16, 22, 32]
 ICNS_SIZES = [16, 32, 128, 256, 512, 1024]
 
@@ -155,6 +160,16 @@ def main():
         ico_32.save(ico_path, format="ICO", sizes=[(16, 16), (32, 32)],
                     append_images=[ico_16])
         print(f"Generated {ico_filename}")
+
+    # Template icons for macOS (saved to internal/icons alongside the color variants)
+    internal_icons_dir = os.path.join(script_dir, "..", "internal", "icons")
+    for variant_name, color in TEMPLATE_VARIANTS.items():
+        for size in TRAY_SIZES:
+            img = draw_mic_icon(size, color)
+            filename = f"icon_{variant_name}_{size}.png"
+            filepath = os.path.join(internal_icons_dir, filename)
+            img.save(filepath, "PNG")
+            print(f"Generated internal/icons/{filename} ({size}x{size})")
 
     # macOS app icon PNGs (for iconutil to pack into .icns)
     iconset_dir = os.path.join(script_dir, "AppIcon.iconset")

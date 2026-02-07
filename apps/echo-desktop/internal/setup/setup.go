@@ -65,7 +65,7 @@ func RunWizard(cfg *config.Config) error {
 		if err != nil {
 			log.Printf("Entry dialog cancelled")
 		} else if code != "" {
-			wsURL := resolveCoordinatorURL(code)
+			wsURL := ResolveCoordinatorURL(code)
 			if wsURL != "" {
 				cfg.CoordinatorURL = wsURL
 			} else {
@@ -104,9 +104,9 @@ func RunWizard(cfg *config.Config) error {
 	return nil
 }
 
-// resolveCoordinatorURL takes a user-provided input (connection code, short URL, HTTPS URL, or ws:// URL)
+// ResolveCoordinatorURL takes a user-provided input (connection code, short URL, HTTPS URL, or ws:// URL)
 // and resolves it to a WebSocket URL.
-func resolveCoordinatorURL(input string) string {
+func ResolveCoordinatorURL(input string) string {
 	input = strings.TrimSpace(input)
 
 	// If already a WebSocket URL, use as-is
