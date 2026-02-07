@@ -118,7 +118,11 @@ func ResolveCoordinatorURL(input string) (string, error) {
 	// If it looks like a bare code (no dots, no slashes, no scheme), treat as short URL code
 	if !strings.Contains(input, ".") && !strings.Contains(input, "/") && !strings.Contains(input, ":") {
 		log.Printf("Treating input as short URL code: %s", input)
-		resolved, err := resolveShortURL("https://tinyurl.com/" + input)
+		// Try is.gd first (current provider), then tinyurl (legacy)
+		resolved, err := resolveShortURL("https://is.gd/" + input)
+		if err != nil {
+			resolved, err = resolveShortURL("https://tinyurl.com/" + input)
+		}
 		if err != nil {
 			return "", fmt.Errorf("could not resolve code '%s': %v", input, err)
 		}

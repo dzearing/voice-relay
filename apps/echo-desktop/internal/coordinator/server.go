@@ -36,7 +36,7 @@ func SetExternalURL(url string) {
 // SetShortURL sets the shortened URL and extracts the connection code.
 func SetShortURL(url string) {
 	shortURL = url
-	// Extract just the code from "https://tinyurl.com/abc123"
+	// Extract just the code from "https://is.gd/abc123"
 	if idx := strings.LastIndex(url, "/"); idx >= 0 {
 		connectionCode = url[idx+1:]
 	}

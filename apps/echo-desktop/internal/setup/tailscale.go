@@ -17,7 +17,7 @@ type TailscaleInfo struct {
 	IP        string
 	DNSName   string
 	FunnelURL string // e.g. "https://machine.tail1234.ts.net"
-	ShortURL  string // e.g. "https://tinyurl.com/abc123"
+	ShortURL  string // e.g. "https://is.gd/abc123"
 }
 
 type tailscaleStatus struct {
@@ -109,9 +109,9 @@ func EnsureFunnel(port int) (string, error) {
 	return url, nil
 }
 
-// ShortenURL creates a short URL via TinyURL.
+// ShortenURL creates a short URL via is.gd.
 func ShortenURL(longURL string) string {
-	apiURL := fmt.Sprintf("https://tinyurl.com/api-create.php?url=%s", longURL)
+	apiURL := fmt.Sprintf("https://is.gd/create.php?format=simple&url=%s", longURL)
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(apiURL)
 	if err != nil {
@@ -121,7 +121,7 @@ func ShortenURL(longURL string) string {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("TinyURL returned status %d", resp.StatusCode)
+		log.Printf("is.gd returned status %d", resp.StatusCode)
 		return ""
 	}
 
@@ -131,12 +131,11 @@ func ShortenURL(longURL string) string {
 	}
 
 	short := strings.TrimSpace(string(body))
-	// Validate: must be a short tinyurl.com URL (not an error page)
-	if strings.HasPrefix(short, "https://tinyurl.com/") && len(short) < 60 {
+	if strings.HasPrefix(short, "https://is.gd/") && len(short) < 60 {
 		log.Printf("Shortened URL: %s -> %s", longURL, short)
 		return short
 	}
 
-	log.Printf("TinyURL returned unexpected response: %s", short[:min(len(short), 100)])
+	log.Printf("is.gd returned unexpected response: %s", short[:min(len(short), 100)])
 	return ""
 }
