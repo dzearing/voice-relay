@@ -15,6 +15,7 @@ npm install
 npm run build
 
 echo "==> Copying PWA dist to Go embed directory..."
+mkdir -p "$PWA_DIST"
 rm -rf "$PWA_DIST"/*
 cp -r "$PWA_DIR/dist/"* "$PWA_DIST/"
 
