@@ -73,28 +73,45 @@ func ensureAccessibility() {
 	}
 
 	log.Println("Accessibility permission not granted, prompting user")
-	keyboard.OpenAccessibilitySettings()
 
-	_ = zenity.Info(
-		"Voice Relay needs Accessibility permission to paste\n"+
-			"text into your apps.\n\n"+
-			"System Settings has been opened for you.\n"+
-			"Please enable Voice Relay in the list, then click OK.",
-		zenity.Title("Accessibility Permission Required"),
-		zenity.OKLabel("I've Enabled It"),
-	)
-
-	// Give macOS a moment to register the permission change
-	time.Sleep(500 * time.Millisecond)
-
-	if !keyboard.HasAccessibility() {
-		_ = zenity.Warning(
-			"Accessibility permission is still not enabled.\n\n"+
-				"Voice Relay will continue, but pasting may not work.\n"+
-				"You can grant permission later in System Settings\n"+
-				"under Privacy & Security → Accessibility.",
-			zenity.Title("Permission Not Detected"),
+	for {
+		err := zenity.Question(
+			"Voice Relay needs Accessibility permission to paste\n"+
+				"text into your apps.\n\n"+
+				"Click \"Open Settings\" to go to System Settings,\n"+
+				"then enable Voice Relay in the Accessibility list.",
+			zenity.Title("Accessibility Permission Required"),
+			zenity.OKLabel("Open Settings"),
+			zenity.ExtraButton("I've Enabled It"),
 		)
+
+		if err == nil {
+			// User clicked "Open Settings"
+			keyboard.OpenAccessibilitySettings()
+			continue
+		}
+
+		if err == zenity.ErrExtraButton {
+			// User clicked "I've Enabled It" — check and break or retry
+			time.Sleep(500 * time.Millisecond)
+			if keyboard.HasAccessibility() {
+				log.Println("Accessibility permission granted")
+				return
+			}
+			// Still not granted — loop back
+			_ = zenity.Warning(
+				"Accessibility permission is still not enabled.\n\n"+
+					"Make sure Voice Relay is toggled on in the list.\n"+
+					"You may need to unlock Settings first (click the lock icon).",
+				zenity.Title("Permission Not Detected"),
+				zenity.OKLabel("Try Again"),
+			)
+			continue
+		}
+
+		// User closed the dialog (pressed X) — continue without permission
+		log.Println("User skipped Accessibility permission prompt")
+		return
 	}
 }
 
