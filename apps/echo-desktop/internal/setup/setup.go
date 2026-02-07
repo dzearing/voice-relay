@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/ncruces/zenity"
 
@@ -65,14 +66,14 @@ func RunWizard(cfg *config.Config) error {
 		if err != nil {
 			log.Printf("Entry dialog cancelled")
 		} else if code != "" {
-			wsURL := ResolveCoordinatorURL(code)
-			if wsURL != "" {
-				cfg.CoordinatorURL = wsURL
-			} else {
+			wsURL, err := ResolveCoordinatorURL(code)
+			if err != nil {
 				_ = zenity.Warning(
-					fmt.Sprintf("Could not connect with code: %s\n\nYou can edit the config file later.", code),
+					fmt.Sprintf("Could not connect: %v\n\nYou can edit the config file later.", err),
 					zenity.Title("Connection Failed"),
 				)
+			} else if wsURL != "" {
+				cfg.CoordinatorURL = wsURL
 			}
 		}
 	}
@@ -105,19 +106,23 @@ func RunWizard(cfg *config.Config) error {
 }
 
 // ResolveCoordinatorURL takes a user-provided input (connection code, short URL, HTTPS URL, or ws:// URL)
-// and resolves it to a WebSocket URL.
-func ResolveCoordinatorURL(input string) string {
+// and resolves it to a WebSocket URL. Returns the URL and an error message if resolution failed.
+func ResolveCoordinatorURL(input string) (string, error) {
 	input = strings.TrimSpace(input)
 
 	// If already a WebSocket URL, use as-is
 	if strings.HasPrefix(input, "ws://") || strings.HasPrefix(input, "wss://") {
-		return input
+		return input, nil
 	}
 
-	// If it looks like a bare code (no dots, no slashes, no scheme), treat as TinyURL code
+	// If it looks like a bare code (no dots, no slashes, no scheme), treat as short URL code
 	if !strings.Contains(input, ".") && !strings.Contains(input, "/") && !strings.Contains(input, ":") {
-		log.Printf("Treating input as TinyURL code: %s", input)
-		input = "https://tinyurl.com/" + input
+		log.Printf("Treating input as short URL code: %s", input)
+		resolved, err := resolveShortURL("https://tinyurl.com/" + input)
+		if err != nil {
+			return "", fmt.Errorf("could not resolve code '%s': %v", input, err)
+		}
+		input = resolved
 	}
 
 	// Ensure it has a scheme
@@ -129,11 +134,11 @@ func ResolveCoordinatorURL(input string) string {
 	infoURL := strings.TrimRight(input, "/") + "/connect-info"
 	log.Printf("Resolving coordinator URL: %s", infoURL)
 
-	resp, err := http.Get(infoURL)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(infoURL)
 	if err != nil {
 		log.Printf("Failed to reach coordinator: %v", err)
-		// Fall back to constructing a WSS URL
-		return deriveWSURL(input)
+		return "", fmt.Errorf("could not reach coordinator at %s", strings.TrimRight(input, "/"))
 	}
 	defer resp.Body.Close()
 
@@ -143,12 +148,39 @@ func ResolveCoordinatorURL(input string) string {
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&info); err == nil && info.WebSocketURL != "" {
 			log.Printf("Resolved WebSocket URL: %s", info.WebSocketURL)
-			return info.WebSocketURL
+			return info.WebSocketURL, nil
 		}
 	}
 
-	// Fall back to constructing a WSS URL
-	return deriveWSURL(input)
+	// Fall back to constructing a WSS URL from the base URL
+	return deriveWSURL(input), nil
+}
+
+// resolveShortURL follows redirects on a short URL and returns the final destination URL.
+func resolveShortURL(shortURL string) (string, error) {
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse // don't follow redirects, capture the Location header
+		},
+	}
+
+	resp, err := client.Get(shortURL)
+	if err != nil {
+		return "", fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		loc := resp.Header.Get("Location")
+		if loc != "" {
+			log.Printf("Short URL resolved: %s -> %s", shortURL, loc)
+			return loc, nil
+		}
+	}
+
+	// If no redirect, the short URL might directly serve content (broken)
+	return "", fmt.Errorf("short URL did not redirect (status %d)", resp.StatusCode)
 }
 
 // deriveWSURL converts an HTTP(S) URL to a WebSocket URL.

@@ -132,32 +132,66 @@ func handleReconnect() {
 		return
 	}
 
-	// Client mode: show a dialog to enter a connection code
-	code, err := zenity.Entry(
-		"Enter the connection code from your coordinator:\n\n"+
-			"Right-click the Voice Relay icon on the coordinator\n"+
-			"machine and look for the code in the menu.\n\n"+
-			"You can also enter a full URL if you have one.",
-		zenity.Title("Connect to Coordinator"),
-		zenity.EntryText(""),
-	)
-	if err != nil || code == "" {
-		return
-	}
+	// Client mode: show a connect dialog with retry loop
+	lastCode := ""
+	errMsg := ""
 
-	wsURL := setup.ResolveCoordinatorURL(code)
-	if wsURL == "" {
-		zenity.Warning(
-			fmt.Sprintf("Could not connect with code: %s", code),
-			zenity.Title("Connection Failed"),
+	for {
+		prompt := "Enter the connection code from your coordinator,\nor a full URL."
+		if errMsg != "" {
+			prompt = errMsg + "\n\n" + prompt
+		}
+
+		code, err := zenity.Entry(
+			prompt,
+			zenity.Title("Connect to Coordinator"),
+			zenity.OKLabel("Connect"),
+			zenity.EntryText(lastCode),
+		)
+		if err != nil {
+			return // user cancelled
+		}
+		code = strings.TrimSpace(code)
+		if code == "" {
+			return
+		}
+		lastCode = code
+
+		// Show progress while resolving
+		dlg, dlgErr := zenity.Progress(
+			zenity.Title("Connect to Coordinator"),
+			zenity.Pulsate(),
+			zenity.NoCancel(),
+		)
+		if dlgErr == nil {
+			dlg.Text("Connecting...")
+		}
+
+		wsURL, resolveErr := setup.ResolveCoordinatorURL(code)
+
+		if dlgErr == nil {
+			dlg.Close()
+		}
+
+		if resolveErr != nil {
+			log.Printf("Connection failed: %v", resolveErr)
+			errMsg = fmt.Sprintf("Connection failed: %v", resolveErr)
+			continue // retry with error shown
+		}
+
+		// Success — update config and connect
+		cfg.CoordinatorURL = wsURL
+		cfg.Save()
+		echoClient.CoordinatorURL = wsURL
+		echoClient.TriggerReconnect()
+
+		zenity.Info(
+			"Connected successfully!\n\nVoice Relay is now connected to the coordinator.",
+			zenity.Title("Connect to Coordinator"),
+			zenity.OKLabel("OK"),
 		)
 		return
 	}
-
-	cfg.CoordinatorURL = wsURL
-	cfg.Save()
-	echoClient.CoordinatorURL = wsURL
-	echoClient.TriggerReconnect()
 }
 
 func initCoordinator() {

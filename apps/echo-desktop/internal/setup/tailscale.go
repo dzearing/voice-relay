@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // TailscaleInfo holds detected Tailscale network information.
@@ -111,7 +112,8 @@ func EnsureFunnel(port int) (string, error) {
 // ShortenURL creates a short URL via TinyURL.
 func ShortenURL(longURL string) string {
 	apiURL := fmt.Sprintf("https://tinyurl.com/api-create.php?url=%s", longURL)
-	resp, err := http.Get(apiURL)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(apiURL)
 	if err != nil {
 		log.Printf("Failed to shorten URL: %v", err)
 		return ""
@@ -129,10 +131,12 @@ func ShortenURL(longURL string) string {
 	}
 
 	short := strings.TrimSpace(string(body))
-	if strings.HasPrefix(short, "https://") {
+	// Validate: must be a short tinyurl.com URL (not an error page)
+	if strings.HasPrefix(short, "https://tinyurl.com/") && len(short) < 60 {
 		log.Printf("Shortened URL: %s -> %s", longURL, short)
 		return short
 	}
 
+	log.Printf("TinyURL returned unexpected response: %s", short[:min(len(short), 100)])
 	return ""
 }
