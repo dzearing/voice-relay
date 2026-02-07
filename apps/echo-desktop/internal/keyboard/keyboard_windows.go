@@ -50,5 +50,14 @@ func OpenURL(url string) error {
 	return cmd.Start()
 }
 
+// HasAccessibility always returns true on Windows (no special permission needed).
+func HasAccessibility() bool { return true }
+
+// OpenAccessibilitySettings is a no-op on Windows.
+func OpenAccessibilitySettings() {}
+
+// CheckAccessibility is a no-op on Windows.
+func CheckAccessibility() {}
+
 // For syscall
 var _ unsafe.Pointer

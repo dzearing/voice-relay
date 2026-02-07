@@ -20,6 +20,7 @@ import (
 	"github.com/voice-relay/echo-desktop/internal/client"
 	"github.com/voice-relay/echo-desktop/internal/config"
 	"github.com/voice-relay/echo-desktop/internal/coordinator"
+	"github.com/voice-relay/echo-desktop/internal/keyboard"
 	"github.com/voice-relay/echo-desktop/internal/llm"
 	"github.com/voice-relay/echo-desktop/internal/setup"
 	"github.com/voice-relay/echo-desktop/internal/stt"
@@ -66,7 +67,41 @@ func main() {
 	systray.Run(onReady, onExit)
 }
 
+func ensureAccessibility() {
+	if keyboard.HasAccessibility() {
+		return
+	}
+
+	log.Println("Accessibility permission not granted, prompting user")
+	keyboard.OpenAccessibilitySettings()
+
+	_ = zenity.Info(
+		"Voice Relay needs Accessibility permission to paste\n"+
+			"text into your apps.\n\n"+
+			"System Settings has been opened for you.\n"+
+			"Please enable Voice Relay in the list, then click OK.",
+		zenity.Title("Accessibility Permission Required"),
+		zenity.OKLabel("I've Enabled It"),
+	)
+
+	// Give macOS a moment to register the permission change
+	time.Sleep(500 * time.Millisecond)
+
+	if !keyboard.HasAccessibility() {
+		_ = zenity.Warning(
+			"Accessibility permission is still not enabled.\n\n"+
+				"Voice Relay will continue, but pasting may not work.\n"+
+				"You can grant permission later in System Settings\n"+
+				"under Privacy & Security → Accessibility.",
+			zenity.Title("Permission Not Detected"),
+		)
+	}
+}
+
 func onReady() {
+	// Check Accessibility permission (macOS only — needed for paste injection)
+	ensureAccessibility()
+
 	// Start coordinator if configured
 	if cfg.RunAsCoordinator {
 		// Set the URL before starting so the client knows where to connect

@@ -20,3 +20,12 @@ func OpenFile(path string) error {
 func OpenURL(url string) error {
 	return exec.Command("xdg-open", url).Start()
 }
+
+// HasAccessibility always returns true on Linux (no special permission needed).
+func HasAccessibility() bool { return true }
+
+// OpenAccessibilitySettings is a no-op on Linux.
+func OpenAccessibilitySettings() {}
+
+// CheckAccessibility is a no-op on Linux.
+func CheckAccessibility() {}
