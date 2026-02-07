@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 	qrcode "github.com/skip2/go-qrcode"
@@ -198,12 +199,14 @@ func handleTranscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sttStart := time.Now()
 	rawText, err := transcribeFn(audioData, header.Filename)
+	sttMs := time.Since(sttStart).Milliseconds()
 	if err != nil {
 		writeJSONError(w, fmt.Sprintf("Transcription error: %v", err), http.StatusInternalServerError)
 		return
 	}
-	log.Printf("Raw transcription: %s", rawText)
+	log.Printf("Raw transcription (%dms): %s", sttMs, rawText)
 
 	// If whisper detected no speech, return early without sending
 	if isBlankTranscription(rawText) {
@@ -213,21 +216,26 @@ func handleTranscribe(w http.ResponseWriter, r *http.Request) {
 			"rawText":     rawText,
 			"cleanedText": "",
 			"noSpeech":    true,
+			"sttMs":       sttMs,
+			"llmMs":       int64(0),
 		})
 		return
 	}
 
 	// 2. Clean up text with LLM
 	cleanedText := rawText
+	var llmMs int64
 	if cleanupFn != nil {
+		llmStart := time.Now()
 		cleaned, err := cleanupFn(rawText)
+		llmMs = time.Since(llmStart).Milliseconds()
 		if err != nil {
-			log.Printf("LLM cleanup failed, using raw text: %v", err)
+			log.Printf("LLM cleanup failed (%dms), using raw text: %v", llmMs, err)
 		} else {
 			cleanedText = cleaned
 		}
 	}
-	log.Printf("Cleaned text: %s", cleanedText)
+	log.Printf("Cleaned text (%dms): %s", llmMs, cleanedText)
 
 	// 3. Send to target
 	if !reg.sendText(target, cleanedText) {
@@ -237,6 +245,8 @@ func handleTranscribe(w http.ResponseWriter, r *http.Request) {
 			"error":       fmt.Sprintf("Target machine '%s' not connected", target),
 			"rawText":     rawText,
 			"cleanedText": cleanedText,
+			"sttMs":       sttMs,
+			"llmMs":       llmMs,
 		})
 		return
 	}
@@ -246,6 +256,8 @@ func handleTranscribe(w http.ResponseWriter, r *http.Request) {
 		"rawText":     rawText,
 		"cleanedText": cleanedText,
 		"target":      target,
+		"sttMs":       sttMs,
+		"llmMs":       llmMs,
 	})
 }
 

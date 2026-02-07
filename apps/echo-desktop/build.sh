@@ -12,7 +12,8 @@ PWA_DIST="$SCRIPT_DIR/internal/coordinator/pwa_dist"
 echo "==> Building PWA..."
 cd "$PWA_DIR"
 npm install
-npm run build
+VERSION=$(cd "$REPO_ROOT" && git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.0.0-dev")
+APP_VERSION="$VERSION" npm run build
 
 echo "==> Copying PWA dist to Go embed directory..."
 mkdir -p "$PWA_DIST"

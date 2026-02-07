@@ -52,81 +52,85 @@ body {
 /* Animated fluid background */
 .bg-fluid {
   position: fixed;
-  inset: -20%;
+  inset: -40%;
   z-index: 0;
   overflow: hidden;
-  filter: blur(60px) saturate(1.6);
+  filter: blur(120px) saturate(1.4);
 }
 
 .bg-fluid .blob {
   position: absolute;
   border-radius: 50%;
-  opacity: 0.6;
+  opacity: 0.4;
   will-change: transform;
 }
 
 .bg-fluid .blob-1 {
-  width: 60vmax;
-  height: 60vmax;
-  background: radial-gradient(circle, #0055ff 0%, transparent 65%);
-  top: -10%;
-  left: -10%;
-  animation: drift1 12s ease-in-out infinite;
+  width: 110vmax;
+  height: 110vmax;
+  background: radial-gradient(circle, #0055ff 0%, transparent 55%);
+  top: -30%;
+  left: -20%;
+  animation: drift1 38s ease-in-out infinite;
 }
 
 .bg-fluid .blob-2 {
-  width: 55vmax;
-  height: 55vmax;
-  background: radial-gradient(circle, #ff2d70 0%, transparent 65%);
-  bottom: -15%;
-  right: -10%;
-  animation: drift2 14s ease-in-out infinite;
+  width: 100vmax;
+  height: 100vmax;
+  background: radial-gradient(circle, #ff2d70 0%, transparent 55%);
+  bottom: -25%;
+  right: -15%;
+  animation: drift2 44s ease-in-out infinite;
 }
 
 .bg-fluid .blob-3 {
-  width: 50vmax;
-  height: 50vmax;
-  background: radial-gradient(circle, #8030ff 0%, transparent 65%);
-  top: 30%;
-  left: 40%;
-  animation: drift3 16s ease-in-out infinite;
+  width: 95vmax;
+  height: 95vmax;
+  background: radial-gradient(circle, #8030ff 0%, transparent 55%);
+  top: 10%;
+  left: 20%;
+  animation: drift3 50s ease-in-out infinite;
 }
 
 .bg-fluid .blob-4 {
-  width: 45vmax;
-  height: 45vmax;
-  background: radial-gradient(circle, #00c8ff 0%, transparent 65%);
-  bottom: 5%;
-  left: -5%;
-  animation: drift4 13s ease-in-out infinite;
+  width: 90vmax;
+  height: 90vmax;
+  background: radial-gradient(circle, #00c8ff 0%, transparent 55%);
+  bottom: -10%;
+  left: -15%;
+  animation: drift4 42s ease-in-out infinite;
 }
 
 @keyframes drift1 {
   0%, 100% { transform: translate(0, 0) scale(1); }
-  25% { transform: translate(12%, 18%) scale(1.08); }
-  50% { transform: translate(20%, 8%) scale(0.95); }
-  75% { transform: translate(-5%, 15%) scale(1.05); }
+  20% { transform: translate(30%, 40%) scale(1.05); }
+  40% { transform: translate(55%, 15%) scale(0.95); }
+  60% { transform: translate(20%, 50%) scale(1.08); }
+  80% { transform: translate(-10%, 25%) scale(0.97); }
 }
 
 @keyframes drift2 {
   0%, 100% { transform: translate(0, 0) scale(1); }
-  25% { transform: translate(-15%, -12%) scale(1.1); }
-  50% { transform: translate(-8%, -22%) scale(0.97); }
-  75% { transform: translate(10%, -8%) scale(1.06); }
+  20% { transform: translate(-40%, -25%) scale(1.06); }
+  40% { transform: translate(-20%, -50%) scale(0.94); }
+  60% { transform: translate(15%, -35%) scale(1.04); }
+  80% { transform: translate(-30%, -10%) scale(1.02); }
 }
 
 @keyframes drift3 {
   0%, 100% { transform: translate(0, 0) scale(1); }
-  25% { transform: translate(18%, -14%) scale(1.12); }
-  50% { transform: translate(-12%, -8%) scale(0.92); }
-  75% { transform: translate(-8%, 12%) scale(1.08); }
+  20% { transform: translate(35%, -30%) scale(1.1); }
+  40% { transform: translate(-25%, -15%) scale(0.92); }
+  60% { transform: translate(-40%, 30%) scale(1.06); }
+  80% { transform: translate(10%, 45%) scale(0.96); }
 }
 
 @keyframes drift4 {
   0%, 100% { transform: translate(0, 0) scale(1); }
-  25% { transform: translate(20%, -15%) scale(1.06); }
-  50% { transform: translate(10%, -25%) scale(1.1); }
-  75% { transform: translate(25%, -5%) scale(0.95); }
+  20% { transform: translate(45%, -20%) scale(1.04); }
+  40% { transform: translate(25%, -45%) scale(1.08); }
+  60% { transform: translate(50%, 10%) scale(0.93); }
+  80% { transform: translate(15%, 35%) scale(1.02); }
 }
 
 #app {
@@ -146,6 +150,7 @@ body {
 
 /* Header */
 header {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -163,6 +168,19 @@ header h1 {
   font-weight: 500;
   letter-spacing: 0.02em;
   color: var(--text-primary);
+}
+
+.version-chip {
+  position: absolute;
+  right: 20px;
+  font-size: 0.65rem;
+  font-weight: 400;
+  color: var(--text-tertiary);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--bg-glass-border);
+  border-radius: 8px;
+  padding: 3px 8px;
+  letter-spacing: 0.02em;
 }
 
 /* Target selector */
@@ -639,6 +657,21 @@ button, select {
   background: var(--error-soft);
   border-color: rgba(239, 68, 68, 0.3);
   color: var(--error);
+}
+
+/* Timing info row */
+.timing-info {
+  padding: 8px 20px;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--text-tertiary);
+  letter-spacing: 0.02em;
+  border-bottom: 1px solid var(--bg-glass-border);
+  flex-shrink: 0;
+}
+
+.timing-info:empty {
+  display: none;
 }
 
 .overlay-body {

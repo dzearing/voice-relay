@@ -12,6 +12,7 @@ const cleanedTextEl = document.getElementById("cleaned-text") as HTMLDivElement;
 const rawTextEl = document.getElementById("raw-text") as HTMLDivElement;
 const resendCleanedBtn = document.getElementById("resend-cleaned-btn") as HTMLButtonElement;
 const resendRawBtn = document.getElementById("resend-raw-btn") as HTMLButtonElement;
+const timingInfoEl = document.getElementById("timing-info") as HTMLDivElement;
 
 // State
 type AppState = "idle" | "recording" | "sending";
@@ -58,12 +59,23 @@ function hideStatus() {
 let lastRawText = "";
 let lastCleanedText = "";
 
-function showResultsButton(rawText: string, cleanedText: string) {
+function formatMs(ms: number): string {
+  return (ms / 1000).toFixed(1) + "s";
+}
+
+function showResultsButton(rawText: string, cleanedText: string, sttMs?: number, llmMs?: number, totalMs?: number) {
   lastRawText = rawText;
   lastCleanedText = cleanedText;
   cleanedTextEl.textContent = cleanedText;
   rawTextEl.textContent = rawText;
   viewResultsBtn.classList.add("visible");
+
+  // Build timing string
+  const parts: string[] = [];
+  if (sttMs != null && sttMs > 0) parts.push(`STT ${formatMs(sttMs)}`);
+  if (llmMs != null && llmMs > 0) parts.push(`LLM ${formatMs(llmMs)}`);
+  if (totalMs != null && totalMs > 0) parts.push(`Total ${formatMs(totalMs)}`);
+  timingInfoEl.textContent = parts.join(" \u00B7 ");
 }
 
 function hideResultsButton() {
@@ -303,12 +315,14 @@ async function sendAudio() {
     formData.append("audio", audioBlob, "recording.wav");
     formData.append("target", target);
 
+    const fetchStart = Date.now();
     const response = await fetch(`${API_BASE}/transcribe`, {
       method: "POST",
       body: formData,
     });
 
     const result = await response.json();
+    const totalMs = Date.now() - fetchStart;
 
     if (response.ok && result.noSpeech) {
       // No speech detected — silently return to idle
@@ -318,7 +332,7 @@ async function sendAudio() {
     } else if (response.ok) {
       setStatus("Sent!", "success");
       setTimeout(hideStatus, 2000);
-      showResultsButton(result.rawText, result.cleanedText);
+      showResultsButton(result.rawText, result.cleanedText, result.sttMs, result.llmMs, totalMs);
       audioBlob = null;
       setState("idle");
     } else {
@@ -425,6 +439,9 @@ resendRawBtn.addEventListener("click", () => sendText(lastRawText));
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js").catch(() => {});
 }
+
+// Version chip
+document.getElementById("version-chip")!.textContent = __APP_VERSION__;
 
 // Initial load
 loadMachines();

@@ -112,9 +112,9 @@ func (e *Engine) CleanupText(rawText string) (string, error) {
 		"model": "qwen3",
 		"messages": []message{
 			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: rawText},
+			{Role: "user", Content: rawText + " /no_think"},
 		},
-		"max_tokens":  2048,
+		"max_tokens":  512,
 		"temperature": 0.1,
 	})
 
