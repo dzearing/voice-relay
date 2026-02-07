@@ -93,6 +93,17 @@ function updateRecordingTime() {
   setStatus(formatTime(elapsed), "recording");
 }
 
+// Persist selected device
+const STORAGE_KEY = "voicerelay_target";
+
+function saveTarget(name: string) {
+  if (name) localStorage.setItem(STORAGE_KEY, name);
+}
+
+function loadTarget(): string {
+  return localStorage.getItem(STORAGE_KEY) || "";
+}
+
 // Fetch available machines
 async function loadMachines() {
   try {
@@ -109,10 +120,34 @@ async function loadMachines() {
     machineSelect.innerHTML = machines
       .map((m: { name: string }) => `<option value="${m.name}">${m.name}</option>`)
       .join("");
+
+    // Restore saved selection
+    const saved = loadTarget();
+    if (saved && Array.from(machineSelect.options).some(o => o.value === saved)) {
+      machineSelect.value = saved;
+    }
   } catch (error) {
     machineSelect.innerHTML = '<option value="">Connection failed</option>';
     setStatus("Connection failed", "error");
   }
+}
+
+// Save selection when changed
+machineSelect.addEventListener("change", () => saveTarget(machineSelect.value));
+
+// Check if recorded samples contain actual audio (not just silence)
+function hasAudio(samples: Float32Array[]): boolean {
+  let sumSquared = 0;
+  let count = 0;
+  for (const chunk of samples) {
+    for (let i = 0; i < chunk.length; i++) {
+      sumSquared += chunk[i] * chunk[i];
+      count++;
+    }
+  }
+  if (count === 0) return false;
+  const rms = Math.sqrt(sumSquared / count);
+  return rms > 0.005;
 }
 
 // Create WAV blob from PCM samples
@@ -210,7 +245,11 @@ function stopRecording() {
     const rate = audioContext.sampleRate;
     audioContext.close();
     audioContext = null;
-    audioBlob = createWavBlob(recordedSamples, rate);
+    if (hasAudio(recordedSamples)) {
+      audioBlob = createWavBlob(recordedSamples, rate);
+    } else {
+      audioBlob = null;
+    }
     recordedSamples = [];
   }
   if (mediaStream) {
@@ -248,10 +287,11 @@ async function sendAudio() {
     return;
   }
 
-  if (!audioBlob) {
-    setStatus("No audio recorded", "error");
+  if (!audioBlob || audioBlob.size < 1000) {
+    // No audio or too short (< ~30ms) — silently return to idle
+    audioBlob = null;
     setState("idle");
-    setTimeout(hideStatus, 2000);
+    hideStatus();
     return;
   }
 
@@ -270,7 +310,12 @@ async function sendAudio() {
 
     const result = await response.json();
 
-    if (response.ok) {
+    if (response.ok && result.noSpeech) {
+      // No speech detected — silently return to idle
+      audioBlob = null;
+      setState("idle");
+      hideStatus();
+    } else if (response.ok) {
       setStatus("Sent!", "success");
       setTimeout(hideStatus, 2000);
       showResultsButton(result.rawText, result.cleanedText);
@@ -288,28 +333,45 @@ async function sendAudio() {
   }
 }
 
-// Main button click handler
-function handleMainButtonClick() {
-  switch (currentState) {
-    case "idle":
-      startRecording();
-      break;
-    case "recording":
-      stopAndSend();
-      break;
+// Press-and-hold interaction:
+// - Press down: start recording immediately
+// - Hold > 1s then release: walkie-talkie mode, sends on release
+// - Tap < 1s then release: toggle mode, tap again to stop and send
+let pressStartTime = 0;
+let isHolding = false;
+
+function handlePressDown(e: Event) {
+  e.preventDefault();
+  if (currentState === "idle") {
+    pressStartTime = Date.now();
+    isHolding = true;
+    startRecording();
+  } else if (currentState === "recording" && !isHolding) {
+    // Toggle mode: second tap stops and sends
+    stopAndSend();
   }
 }
 
-// Event listeners
-mainBtn.addEventListener("click", (e) => {
+function handlePressUp(e: Event) {
   e.preventDefault();
-  handleMainButtonClick();
-});
+  if (!isHolding || currentState !== "recording") return;
+  isHolding = false;
 
-mainBtn.addEventListener("touchend", (e) => {
-  e.preventDefault();
-  handleMainButtonClick();
-});
+  const holdDuration = Date.now() - pressStartTime;
+  if (holdDuration > 1000) {
+    // Walkie-talkie: held long enough, send immediately
+    stopAndSend();
+  }
+  // Otherwise: short tap, stay in recording (toggle mode)
+}
+
+// Mouse events
+mainBtn.addEventListener("mousedown", handlePressDown);
+mainBtn.addEventListener("mouseup", handlePressUp);
+
+// Touch events
+mainBtn.addEventListener("touchstart", handlePressDown, { passive: false });
+mainBtn.addEventListener("touchend", handlePressUp, { passive: false });
 
 cancelBtn.addEventListener("click", (e) => {
   e.preventDefault();

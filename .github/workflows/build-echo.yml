@@ -17,7 +17,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.24'
           cache: false
 
       - uses: actions/setup-node@v4
@@ -39,7 +39,8 @@ jobs:
         working-directory: apps/echo-desktop
         run: |
           go mod tidy
-          CGO_ENABLED=1 GOARCH=arm64 go build -o VoiceRelay
+          VERSION="${GITHUB_REF_NAME#v}"
+          CGO_ENABLED=1 GOARCH=arm64 go build -ldflags "-X github.com/voice-relay/echo-desktop/internal/updater.CurrentVersion=$VERSION" -o VoiceRelay
 
       - name: Generate macOS app icon
         working-directory: apps/echo-desktop/icons
@@ -92,7 +93,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.24'
           cache: false
 
       - uses: actions/setup-node@v4
@@ -120,7 +121,8 @@ jobs:
         shell: bash
         run: |
           go mod tidy
-          CGO_ENABLED=1 go build -ldflags "-H windowsgui" -o VoiceRelay.exe
+          VERSION="${GITHUB_REF_NAME#v}"
+          CGO_ENABLED=1 go build -ldflags "-H windowsgui -X github.com/voice-relay/echo-desktop/internal/updater.CurrentVersion=$VERSION" -o VoiceRelay.exe
 
       - uses: actions/upload-artifact@v4
         with:

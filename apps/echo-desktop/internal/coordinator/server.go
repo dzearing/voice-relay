@@ -1,22 +1,61 @@
 package coordinator
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/gorilla/websocket"
+	qrcode "github.com/skip2/go-qrcode"
 )
 
 var (
-	reg      *registry
-	sttFunc  func(audioData []byte, filename string) (string, error)
-	llmFunc  func(rawText string) (string, error)
-	funcMu    sync.RWMutex
+	reg           *registry
+	sttFunc       func(audioData []byte, filename string) (string, error)
+	llmFunc       func(rawText string) (string, error)
+	funcMu        sync.RWMutex
+	coordinatorPort int
+	externalURL   string // e.g. "http://100.x.x.x:53937" for Tailscale
 )
+
+var (
+	shortURL      string
+	connectionCode string // just the unique part, e.g. "abc123"
+)
+
+// SetExternalURL sets the externally-reachable URL for the coordinator (e.g. Tailscale Funnel).
+func SetExternalURL(url string) {
+	externalURL = url
+}
+
+// SetShortURL sets the shortened URL and extracts the connection code.
+func SetShortURL(url string) {
+	shortURL = url
+	// Extract just the code from "https://tinyurl.com/abc123"
+	if idx := strings.LastIndex(url, "/"); idx >= 0 {
+		connectionCode = url[idx+1:]
+	}
+}
+
+// GetExternalURL returns the external URL if set.
+func GetExternalURL() string {
+	return externalURL
+}
+
+// GetShortURL returns the short URL if set.
+func GetShortURL() string {
+	return shortURL
+}
+
+// GetConnectionCode returns the short connection code.
+func GetConnectionCode() string {
+	return connectionCode
+}
 
 // SetSTTFunc sets the speech-to-text function used by the /transcribe endpoint.
 func SetSTTFunc(fn func(audioData []byte, filename string) (string, error)) {
@@ -39,6 +78,7 @@ var upgrader = websocket.Upgrader{
 // Start launches the coordinator HTTP/WS server on the given port.
 func Start(port int) error {
 	reg = newRegistry()
+	coordinatorPort = port
 
 	mux := http.NewServeMux()
 
@@ -48,6 +88,8 @@ func Start(port int) error {
 	mux.HandleFunc("/transcribe", handleTranscribe)
 	mux.HandleFunc("/send-text", handleSendText)
 	mux.HandleFunc("/ws", handleWebSocket)
+	mux.HandleFunc("/connect", handleConnect)
+	mux.HandleFunc("/connect-info", handleConnectInfo)
 
 	// Serve PWA static files (fallback for all other routes)
 	mux.Handle("/", pwaHandler())
@@ -163,6 +205,18 @@ func handleTranscribe(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("Raw transcription: %s", rawText)
 
+	// If whisper detected no speech, return early without sending
+	if isBlankTranscription(rawText) {
+		log.Printf("No speech detected, not sending")
+		writeJSON(w, map[string]interface{}{
+			"success":     false,
+			"rawText":     rawText,
+			"cleanedText": "",
+			"noSpeech":    true,
+		})
+		return
+	}
+
 	// 2. Clean up text with LLM
 	cleanedText := rawText
 	if cleanupFn != nil {
@@ -236,6 +290,24 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
+func isBlankTranscription(text string) bool {
+	t := strings.TrimSpace(strings.ToLower(text))
+	if t == "" {
+		return true
+	}
+	blanks := []string{
+		"[blank_audio]", "(blank_audio)", "[blank audio]", "(blank audio)",
+		"[no speech]", "(no speech)", "[silence]", "(silence)",
+		"you", "thank you.", "thanks for watching!",
+	}
+	for _, b := range blanks {
+		if t == b {
+			return true
+		}
+	}
+	return false
+}
+
 func writeJSON(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
@@ -245,4 +317,74 @@ func writeJSONError(w http.ResponseWriter, msg string, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// connectInfo is returned by /connect-info for client auto-configuration.
+type connectInfo struct {
+	WebSocketURL string `json:"wsUrl"`
+	ExternalURL  string `json:"externalUrl"`
+	ShortURL     string `json:"shortUrl,omitempty"`
+}
+
+func handleConnectInfo(w http.ResponseWriter, r *http.Request) {
+	wsURL := fmt.Sprintf("wss://%s/ws", strings.TrimPrefix(strings.TrimPrefix(externalURL, "https://"), "http://"))
+	if externalURL == "" {
+		wsURL = fmt.Sprintf("ws://localhost:%d/ws", coordinatorPort)
+	}
+	writeJSON(w, connectInfo{
+		WebSocketURL: wsURL,
+		ExternalURL:  externalURL,
+		ShortURL:     shortURL,
+	})
+}
+
+func handleConnect(w http.ResponseWriter, r *http.Request) {
+	url := externalURL
+	if url == "" {
+		url = fmt.Sprintf("http://localhost:%d", coordinatorPort)
+	}
+
+	png, err := qrcode.Encode(url, qrcode.Medium, 320)
+	if err != nil {
+		http.Error(w, "Failed to generate QR code", http.StatusInternalServerError)
+		return
+	}
+	b64 := base64.StdEncoding.EncodeToString(png)
+
+	// Show connection code prominently if available
+	codeSection := ""
+	if connectionCode != "" {
+		codeSection = fmt.Sprintf(`<div class="code-section">
+      <p class="label">Connection code for other devices:</p>
+      <div class="code">%s</div>
+    </div>`, connectionCode)
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Connect to Voice Relay</title>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #0a0a14; color: #e0e0e0; }
+  .card { text-align: center; padding: 2rem; max-width: 400px; }
+  h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+  .subtitle { color: #888; margin-bottom: 1.5rem; }
+  img { border-radius: 12px; }
+  .url { font-family: monospace; font-size: 0.85rem; color: #666; margin-top: 1rem; word-break: break-all; }
+  .code-section { margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid rgba(255,255,255,0.1); }
+  .label { color: #888; font-size: 0.9rem; margin-bottom: 0.75rem; }
+  .code { font-family: monospace; font-size: 2rem; color: #00d4ff; font-weight: 700; letter-spacing: 0.15em; padding: 14px 28px; background: rgba(0,212,255,0.1); border: 1px solid rgba(0,212,255,0.2); border-radius: 12px; }
+  .setup-hint { margin-top: 2rem; padding: 1rem; background: rgba(255,255,255,0.05); border-radius: 10px; color: #888; font-size: 0.85rem; line-height: 1.5; }
+  .setup-hint strong { color: #ccc; }
+</style></head>
+<body><div class="card">
+  <h1>Voice Relay</h1>
+  <p class="subtitle">Scan to open the web app on your phone</p>
+  <img src="data:image/png;base64,%s" width="280" height="280" alt="QR Code">
+  <div class="url">%s</div>
+  %s
+  <div class="setup-hint">
+    <strong>Connecting another computer?</strong><br>
+    Install Voice Relay, then enter the connection code when prompted during setup.
+  </div>
+</div></body></html>`, b64, url, codeSection)
 }

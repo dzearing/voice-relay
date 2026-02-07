@@ -38,7 +38,16 @@ func Paste() error {
 
 // OpenFile opens a file in the default text editor.
 func OpenFile(path string) error {
-	return exec.Command("notepad", path).Start()
+	cmd := exec.Command("notepad", path)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	return cmd.Start()
+}
+
+// OpenURL opens a URL in the default browser.
+func OpenURL(url string) error {
+	cmd := exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	return cmd.Start()
 }
 
 // For syscall

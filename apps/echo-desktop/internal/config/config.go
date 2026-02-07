@@ -118,7 +118,7 @@ func (c *Config) applyDefaults() {
 	if c.WhisperModel == "" {
 		c.WhisperModel = "base"
 	}
-	if c.LLMModel == "" {
+	if c.LLMModel == "" || c.LLMModel == "qwen3-0.6b" {
 		c.LLMModel = "qwen3-4b"
 	}
 }

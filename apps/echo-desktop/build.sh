@@ -21,6 +21,7 @@ cp -r "$PWA_DIR/dist/"* "$PWA_DIST/"
 echo "==> Building Go binary..."
 cd "$SCRIPT_DIR"
 go mod tidy
-CGO_ENABLED=1 go build -o VoiceRelay -ldflags "-H windowsgui" .
+VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.0.0-dev")
+CGO_ENABLED=1 go build -o VoiceRelay -ldflags "-H windowsgui -X github.com/voice-relay/echo-desktop/internal/updater.CurrentVersion=$VERSION" .
 
 echo "==> Done! Binary: $SCRIPT_DIR/VoiceRelay"

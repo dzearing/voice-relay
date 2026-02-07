@@ -2,10 +2,15 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -29,6 +34,24 @@ var (
 )
 
 func main() {
+	// --force: kill any existing VoiceRelay instances before starting
+	for _, arg := range os.Args[1:] {
+		if arg == "--force" {
+			killExisting()
+			break
+		}
+	}
+
+	// Setup file logging
+	logPath := filepath.Join(config.Dir(), "voicerelay.log")
+	os.MkdirAll(config.Dir(), 0755)
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err == nil {
+		log.SetOutput(io.MultiWriter(os.Stderr, logFile))
+		defer logFile.Close()
+	}
+	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
+
 	cfg = config.Load()
 
 	// First-run setup wizard
@@ -47,6 +70,28 @@ func onReady() {
 	if cfg.RunAsCoordinator {
 		// Set the URL before starting so the client knows where to connect
 		cfg.CoordinatorURL = fmt.Sprintf("ws://localhost:%d/ws", cfg.Port)
+
+		// Auto-start Tailscale Funnel and detect the URL
+		ts := setup.DetectTailscale()
+		if ts.Available {
+			funnelURL, err := setup.EnsureFunnel(cfg.Port)
+			if err != nil {
+				log.Printf("Tailscale Funnel not available: %v", err)
+			} else if funnelURL != "" {
+				coordinator.SetExternalURL(funnelURL)
+
+				// Create a short URL for easy sharing
+				shortURL := setup.ShortenURL(funnelURL)
+				if shortURL != "" {
+					coordinator.SetShortURL(shortURL)
+				}
+
+				log.Printf("Coordinator accessible at: %s", funnelURL)
+			}
+		} else {
+			log.Printf("Tailscale not available, coordinator only accessible on localhost")
+		}
+
 		go initCoordinator()
 	}
 
@@ -144,4 +189,57 @@ func onExit() {
 	if llmEngine != nil {
 		llmEngine.Close()
 	}
+}
+
+// killExisting terminates other running VoiceRelay processes (not ourselves).
+func killExisting() {
+	myPID := os.Getpid()
+	exeName := filepath.Base(os.Args[0])
+
+	switch runtime.GOOS {
+	case "windows":
+		// WMIC lists PIDs for processes matching our executable name.
+		cmd := exec.Command("wmic", "process", "where",
+			fmt.Sprintf("Name='%s'", exeName), "get", "ProcessId", "/format:list")
+		hideWindow(cmd)
+		out, err := cmd.Output()
+		if err != nil {
+			return
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			line = strings.TrimSpace(line)
+			if !strings.HasPrefix(line, "ProcessId=") {
+				continue
+			}
+			pidStr := strings.TrimPrefix(line, "ProcessId=")
+			pid, err := strconv.Atoi(strings.TrimSpace(pidStr))
+			if err != nil || pid == myPID {
+				continue
+			}
+			log.Printf("Killing existing VoiceRelay process (PID %d)", pid)
+			p, err := os.FindProcess(pid)
+			if err == nil {
+				p.Kill()
+			}
+		}
+	default:
+		// pgrep for macOS/Linux
+		pgrepCmd := exec.Command("pgrep", "-f", exeName)
+		hideWindow(pgrepCmd)
+		out, _ := pgrepCmd.Output()
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			pid, err := strconv.Atoi(strings.TrimSpace(line))
+			if err != nil || pid == myPID {
+				continue
+			}
+			log.Printf("Killing existing VoiceRelay process (PID %d)", pid)
+			p, err := os.FindProcess(pid)
+			if err == nil {
+				p.Kill()
+			}
+		}
+	}
+
+	// Brief pause to let killed processes release resources
+	time.Sleep(500 * time.Millisecond)
 }

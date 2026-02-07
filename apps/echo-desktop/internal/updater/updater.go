@@ -1,213 +1,138 @@
 package updater
 
 import (
-	"archive/zip"
-	"bytes"
-	"encoding/json"
+	"context"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"runtime"
-	"strings"
+
+	"github.com/creativeprojects/go-selfupdate"
 )
+
+// CurrentVersion is the default version, overridden at build time via:
+//
+//	-ldflags "-X github.com/voice-relay/echo-desktop/internal/updater.CurrentVersion=1.2.3"
+var CurrentVersion = "0.0.0-dev"
 
 const (
-	CurrentVersion = "1.1.0"
-	repoOwner      = "dzearing"
-	repoName       = "voice-relay"
+	repoOwner = "dzearing"
+	repoName  = "voice-relay"
 )
 
-type gitHubRelease struct {
-	TagName string `json:"tag_name"`
-	Assets  []struct {
-		Name               string `json:"name"`
-		BrowserDownloadURL string `json:"browser_download_url"`
-	} `json:"assets"`
+// newUpdater returns an Updater configured with a filter for the current
+// platform's asset name. Filters bypass the library's default OS/arch suffix
+// matching, which doesn't recognise our custom asset names.
+func newUpdater() (*selfupdate.Updater, error) {
+	// The library lowercases asset names before matching, so use (?i).
+	filter := `(?i)^voicerelay\.exe$`
+	if runtime.GOOS == "darwin" {
+		filter = `(?i)^voicerelay-macos-arm64\.zip$`
+	}
+	return selfupdate.NewUpdater(selfupdate.Config{
+		Filters: []string{filter},
+	})
 }
 
-// CheckForUpdates checks GitHub for a newer release and installs it if found.
+// releaseInfo holds the detected latest release metadata.
+type releaseInfo struct {
+	Version string
+	release *selfupdate.Release
+}
+
+// checkLatest queries GitHub for the latest release.
+// Returns nil (no error) when already up to date.
+func checkLatest() (*releaseInfo, error) {
+	up, err := newUpdater()
+	if err != nil {
+		return nil, fmt.Errorf("creating updater: %w", err)
+	}
+
+	latest, found, err := up.DetectLatest(context.Background(), selfupdate.ParseSlug(repoOwner+"/"+repoName))
+	if err != nil {
+		return nil, fmt.Errorf("detecting latest release: %w", err)
+	}
+	if !found {
+		return nil, fmt.Errorf("no release found for %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+
+	if latest.LessOrEqual(CurrentVersion) {
+		return nil, nil
+	}
+
+	return &releaseInfo{
+		Version: latest.Version(),
+		release: latest,
+	}, nil
+}
+
+// applyUpdate downloads the release asset and replaces the running binary.
+//
+// On Windows, we download to a staging file, spawn a helper script, and exit;
+// the script waits for us to die, swaps the file, and relaunches.
+//
+// On macOS, we download the zip, extract the .app bundle, and swap it in
+// place (macOS doesn't lock running binaries).
+func applyUpdate(info *releaseInfo, quit func()) error {
+	switch runtime.GOOS {
+	case "windows":
+		return applyUpdateWindows(info, quit)
+	case "darwin":
+		return applyUpdateDarwin(info)
+	default:
+		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+	}
+}
+
+// downloadAsset downloads the release asset URL to the given path.
+func downloadAsset(url, dest string) error {
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download returned %d", resp.StatusCode)
+	}
+
+	f, err := os.Create(dest)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = io.Copy(f, resp.Body)
+	return err
+}
+
+// CheckForUpdates checks GitHub for a newer release and stages it silently.
 func CheckForUpdates() {
 	log.Println("Checking for updates...")
 
-	release, err := getLatestRelease()
+	info, err := checkLatest()
 	if err != nil {
 		log.Printf("Update check failed: %v", err)
 		return
 	}
-
-	latestVersion := strings.TrimPrefix(release.TagName, "v")
-	if latestVersion == CurrentVersion {
+	if info == nil {
 		log.Printf("Already on latest version (%s)", CurrentVersion)
 		return
 	}
 
-	log.Printf("New version available: %s (current: %s)", latestVersion, CurrentVersion)
-
-	assetName := getAssetName()
-	var downloadURL string
-	for _, asset := range release.Assets {
-		if asset.Name == assetName {
-			downloadURL = asset.BrowserDownloadURL
-			break
-		}
-	}
-
-	if downloadURL == "" {
-		log.Printf("No download available for this platform")
+	log.Printf("New version available: %s (current: %s)", info.Version, CurrentVersion)
+	// Don't auto-apply on Windows; the interactive dialog handles the
+	// download + restart flow. Just log the availability.
+	if runtime.GOOS == "windows" {
 		return
 	}
 
-	if err := downloadAndInstall(downloadURL, assetName); err != nil {
+	if err := applyUpdate(info, nil); err != nil {
 		log.Printf("Update failed: %v", err)
 		return
 	}
 
 	log.Println("Update installed! Please restart the app.")
-}
-
-func getLatestRelease() (*gitHubRelease, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", repoOwner, repoName)
-
-	resp, err := http.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("GitHub API returned %d", resp.StatusCode)
-	}
-
-	var release gitHubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return nil, err
-	}
-
-	return &release, nil
-}
-
-func getAssetName() string {
-	if runtime.GOOS == "darwin" {
-		return "VoiceRelay-macOS-arm64.zip"
-	}
-	return "VoiceRelay.exe"
-}
-
-func downloadAndInstall(url, assetName string) error {
-	log.Printf("Downloading %s...", assetName)
-
-	resp, err := http.Get(url)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("download failed with status %d", resp.StatusCode)
-	}
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-
-	log.Printf("Downloaded %d bytes", len(data))
-
-	execPath, err := os.Executable()
-	if err != nil {
-		return err
-	}
-
-	if runtime.GOOS == "darwin" {
-		return installMacOS(data, execPath)
-	}
-
-	return installWindows(data, execPath)
-}
-
-func installMacOS(zipData []byte, execPath string) error {
-	appPath := execPath
-	for i := 0; i < 3; i++ {
-		appPath = filepath.Dir(appPath)
-	}
-
-	if !strings.HasSuffix(appPath, ".app") {
-		return fmt.Errorf("not running from .app bundle")
-	}
-
-	zipReader, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
-	if err != nil {
-		return err
-	}
-
-	tempDir, err := os.MkdirTemp("", "voicerelay-update")
-	if err != nil {
-		return err
-	}
-
-	for _, file := range zipReader.File {
-		destPath := filepath.Join(tempDir, file.Name)
-
-		if file.FileInfo().IsDir() {
-			os.MkdirAll(destPath, file.Mode())
-			continue
-		}
-
-		os.MkdirAll(filepath.Dir(destPath), 0755)
-
-		destFile, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, file.Mode())
-		if err != nil {
-			return err
-		}
-
-		srcFile, err := file.Open()
-		if err != nil {
-			destFile.Close()
-			return err
-		}
-
-		_, err = io.Copy(destFile, srcFile)
-		srcFile.Close()
-		destFile.Close()
-		if err != nil {
-			return err
-		}
-	}
-
-	backupPath := appPath + ".backup"
-	os.RemoveAll(backupPath)
-
-	if err := os.Rename(appPath, backupPath); err != nil {
-		return err
-	}
-
-	newAppPath := filepath.Join(tempDir, "VoiceRelay.app")
-	if err := os.Rename(newAppPath, appPath); err != nil {
-		os.Rename(backupPath, appPath)
-		return err
-	}
-
-	os.RemoveAll(backupPath)
-	os.RemoveAll(tempDir)
-
-	return nil
-}
-
-func installWindows(exeData []byte, execPath string) error {
-	oldPath := execPath + ".old"
-	os.Remove(oldPath)
-
-	if err := os.Rename(execPath, oldPath); err != nil {
-		return err
-	}
-
-	if err := os.WriteFile(execPath, exeData, 0755); err != nil {
-		os.Rename(oldPath, execPath)
-		return err
-	}
-
-	return nil
 }

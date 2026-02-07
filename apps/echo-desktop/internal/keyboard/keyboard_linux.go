@@ -15,3 +15,8 @@ func Paste() error {
 func OpenFile(path string) error {
 	return exec.Command("xdg-open", path).Start()
 }
+
+// OpenURL opens a URL in the default browser.
+func OpenURL(url string) error {
+	return exec.Command("xdg-open", url).Start()
+}

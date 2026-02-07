@@ -5,7 +5,7 @@
 }
 
 :root {
-  --bg-deep: #0d0d12;
+  --bg-deep: #0a0a14;
   --bg-elevated: rgba(255, 255, 255, 0.06);
   --bg-glass: rgba(255, 255, 255, 0.08);
   --bg-glass-border: rgba(255, 255, 255, 0.12);
@@ -46,9 +46,92 @@ body {
   min-height: 100vh;
   min-height: 100dvh;
   -webkit-font-smoothing: antialiased;
+  position: relative;
+}
+
+/* Animated fluid background */
+.bg-fluid {
+  position: fixed;
+  inset: -20%;
+  z-index: 0;
+  overflow: hidden;
+  filter: blur(60px) saturate(1.6);
+}
+
+.bg-fluid .blob {
+  position: absolute;
+  border-radius: 50%;
+  opacity: 0.6;
+  will-change: transform;
+}
+
+.bg-fluid .blob-1 {
+  width: 60vmax;
+  height: 60vmax;
+  background: radial-gradient(circle, #0055ff 0%, transparent 65%);
+  top: -10%;
+  left: -10%;
+  animation: drift1 12s ease-in-out infinite;
+}
+
+.bg-fluid .blob-2 {
+  width: 55vmax;
+  height: 55vmax;
+  background: radial-gradient(circle, #ff2d70 0%, transparent 65%);
+  bottom: -15%;
+  right: -10%;
+  animation: drift2 14s ease-in-out infinite;
+}
+
+.bg-fluid .blob-3 {
+  width: 50vmax;
+  height: 50vmax;
+  background: radial-gradient(circle, #8030ff 0%, transparent 65%);
+  top: 30%;
+  left: 40%;
+  animation: drift3 16s ease-in-out infinite;
+}
+
+.bg-fluid .blob-4 {
+  width: 45vmax;
+  height: 45vmax;
+  background: radial-gradient(circle, #00c8ff 0%, transparent 65%);
+  bottom: 5%;
+  left: -5%;
+  animation: drift4 13s ease-in-out infinite;
+}
+
+@keyframes drift1 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  25% { transform: translate(12%, 18%) scale(1.08); }
+  50% { transform: translate(20%, 8%) scale(0.95); }
+  75% { transform: translate(-5%, 15%) scale(1.05); }
+}
+
+@keyframes drift2 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  25% { transform: translate(-15%, -12%) scale(1.1); }
+  50% { transform: translate(-8%, -22%) scale(0.97); }
+  75% { transform: translate(10%, -8%) scale(1.06); }
+}
+
+@keyframes drift3 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  25% { transform: translate(18%, -14%) scale(1.12); }
+  50% { transform: translate(-12%, -8%) scale(0.92); }
+  75% { transform: translate(-8%, 12%) scale(1.08); }
+}
+
+@keyframes drift4 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  25% { transform: translate(20%, -15%) scale(1.06); }
+  50% { transform: translate(10%, -25%) scale(1.1); }
+  75% { transform: translate(25%, -5%) scale(0.95); }
 }
 
 #app {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   min-height: 100vh;
@@ -68,6 +151,7 @@ header {
   justify-content: center;
   gap: 12px;
   padding: 8px 0 32px;
+  flex-shrink: 0;
 }
 
 .logo {
@@ -83,11 +167,12 @@ header h1 {
 
 /* Target selector */
 .target-container {
-  margin-bottom: 32px;
+  margin-bottom: 0;
+  flex-shrink: 0;
 }
 
 .target-glass {
-  background: var(--bg-glass);
+  background: rgba(255, 255, 255, 0.05);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--bg-glass-border);
@@ -153,75 +238,81 @@ header h1 {
   background: var(--bg-glass);
 }
 
-/* Main content */
+/* Main content — use all remaining space, center the button */
 main {
   flex: 1;
   display: flex;
   flex-direction: column;
-  justify-content: center;
   align-items: center;
-  gap: 24px;
+  position: relative;
 }
 
-/* Button container */
+/* Button area — absolutely centered so nothing shifts it */
 .button-container {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -55%);
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 16px;
 }
 
-/* Main action button */
+/* Main action button — glassy translucent */
 .main-btn {
   position: relative;
-  width: 160px;
-  height: 160px;
+  width: 200px;
+  height: 200px;
   border-radius: 50%;
   border: none;
   background: transparent;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  transition: transform var(--transition-spring);
+  transition: transform 100ms ease;
+  touch-action: none;
 }
 
 .main-btn:active {
-  transform: scale(0.95);
+  transform: scale(0.97);
 }
 
 .btn-glow {
   position: absolute;
-  inset: 0;
+  inset: -4px;
   border-radius: 50%;
   pointer-events: none;
-  transition: all var(--transition-medium);
+  transition: box-shadow 100ms ease;
   box-shadow:
-    0 0 8px 2px rgba(0, 212, 255, 0.6),
-    0 0 20px 8px rgba(0, 212, 255, 0.3),
-    0 0 40px 16px rgba(0, 212, 255, 0.15),
-    0 0 80px 30px rgba(0, 212, 255, 0.05);
+    0 0 12px 4px rgba(0, 212, 255, 0.5),
+    0 0 30px 12px rgba(0, 212, 255, 0.25),
+    0 0 60px 24px rgba(0, 212, 255, 0.1);
 }
 
 .btn-inner {
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  background: linear-gradient(145deg, #2a2a35 0%, #1a1a22 100%);
-  border: 2px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+  border: 1.5px solid rgba(255, 255, 255, 0.2);
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--text-primary);
   box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.5),
-    inset 0 1px 0 rgba(255, 255, 255, 0.1);
-  transition: all var(--transition-medium);
+    0 8px 32px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.1);
+  transition: border-color 100ms ease, background 100ms ease, box-shadow 100ms ease;
 }
 
 .main-btn .icon-mic,
 .main-btn .icon-send,
 .main-btn .icon-loader {
   position: absolute;
-  transition: all var(--transition-medium);
+  transition: opacity 250ms ease, transform 250ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .main-btn .icon-mic {
@@ -231,12 +322,12 @@ main {
 
 .main-btn .icon-send {
   opacity: 0;
-  transform: scale(0.6);
+  transform: scale(0.5);
 }
 
 .main-btn .icon-loader {
   opacity: 0;
-  transform: scale(0.6);
+  transform: scale(0.5);
 }
 
 .main-btn .icon-loader svg {
@@ -251,24 +342,25 @@ main {
 /* Recording state */
 .main-btn[data-state="recording"] .btn-glow {
   box-shadow:
-    0 0 10px 3px rgba(255, 45, 85, 0.7),
-    0 0 25px 10px rgba(255, 45, 85, 0.4),
-    0 0 50px 20px rgba(255, 45, 85, 0.2),
-    0 0 100px 40px rgba(255, 45, 85, 0.08);
+    0 0 14px 5px rgba(255, 45, 85, 0.6),
+    0 0 35px 15px rgba(255, 45, 85, 0.35),
+    0 0 70px 30px rgba(255, 45, 85, 0.15);
   animation: pulse-glow 1.5s ease-in-out infinite;
 }
 
 .main-btn[data-state="recording"] .btn-inner {
-  border-color: var(--recording);
+  border-color: rgba(255, 45, 85, 0.5);
+  background: rgba(255, 45, 85, 0.1);
   box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.5),
+    0 8px 32px rgba(0, 0, 0, 0.3),
     0 0 40px var(--recording-soft),
-    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    inset 0 1px 0 rgba(255, 255, 255, 0.15),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.1);
 }
 
 .main-btn[data-state="recording"] .icon-mic {
   opacity: 0;
-  transform: scale(0.6);
+  transform: scale(1.3);
 }
 
 .main-btn[data-state="recording"] .icon-send {
@@ -280,41 +372,38 @@ main {
 @keyframes pulse-glow {
   0%, 100% {
     box-shadow:
-      0 0 10px 3px rgba(255, 45, 85, 0.6),
-      0 0 25px 10px rgba(255, 45, 85, 0.35),
-      0 0 50px 20px rgba(255, 45, 85, 0.15),
-      0 0 100px 40px rgba(255, 45, 85, 0.05);
+      0 0 14px 5px rgba(255, 45, 85, 0.5),
+      0 0 35px 15px rgba(255, 45, 85, 0.3),
+      0 0 70px 30px rgba(255, 45, 85, 0.12);
   }
   50% {
     box-shadow:
-      0 0 12px 4px rgba(255, 45, 85, 0.8),
-      0 0 30px 12px rgba(255, 45, 85, 0.5),
-      0 0 60px 25px rgba(255, 45, 85, 0.25),
-      0 0 120px 50px rgba(255, 45, 85, 0.1);
+      0 0 18px 7px rgba(255, 45, 85, 0.7),
+      0 0 45px 20px rgba(255, 45, 85, 0.4),
+      0 0 90px 40px rgba(255, 45, 85, 0.18);
   }
 }
 
 /* Sending state */
 .main-btn[data-state="sending"] .btn-glow {
   box-shadow:
-    0 0 8px 2px rgba(0, 212, 255, 0.5),
-    0 0 20px 8px rgba(0, 212, 255, 0.25),
-    0 0 40px 16px rgba(0, 212, 255, 0.1),
-    0 0 80px 30px rgba(0, 212, 255, 0.03);
+    0 0 12px 4px rgba(0, 212, 255, 0.4),
+    0 0 30px 12px rgba(0, 212, 255, 0.2),
+    0 0 60px 24px rgba(0, 212, 255, 0.08);
 }
 
 .main-btn[data-state="sending"] .btn-inner {
-  border-color: var(--accent-cyan);
+  border-color: rgba(0, 212, 255, 0.4);
 }
 
 .main-btn[data-state="sending"] .icon-mic {
   opacity: 0;
-  transform: scale(0.6);
+  transform: scale(1.3);
 }
 
 .main-btn[data-state="sending"] .icon-send {
   opacity: 0;
-  transform: scale(0.6);
+  transform: scale(1.3);
 }
 
 .main-btn[data-state="sending"] .icon-loader {
@@ -332,21 +421,21 @@ main {
   height: 52px;
   border-radius: 50%;
   border: none;
-  background: var(--bg-glass);
+  background: rgba(255, 255, 255, 0.05);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   border: 1px solid var(--bg-glass-border);
   color: var(--text-secondary);
   cursor: pointer;
   opacity: 0;
-  transform: scale(0.8) translateY(-10px);
+  transform: scale(0.8);
   pointer-events: none;
   transition: all var(--transition-spring);
 }
 
 .cancel-btn.visible {
   opacity: 1;
-  transform: scale(1) translateY(0);
+  transform: scale(1);
   pointer-events: auto;
 }
 
@@ -357,25 +446,27 @@ main {
   color: var(--error);
 }
 
-/* Status area */
+/* Status — positioned at bottom of main, doesn't affect button */
 .status-container {
-  min-height: 60px;
-  width: 100%;
-  max-width: 320px;
+  position: absolute;
+  bottom: 80px;
+  left: 0;
+  right: 0;
   display: flex;
-  align-items: center;
   justify-content: center;
+  padding: 0 20px;
 }
 
 .status {
   text-align: center;
   padding: 14px 20px;
-  background: var(--bg-glass);
+  background: rgba(255, 255, 255, 0.05);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--bg-glass-border);
   border-radius: 12px;
   width: 100%;
+  max-width: 320px;
   opacity: 0;
   transform: translateY(8px);
   transition: all var(--transition-medium);
@@ -436,15 +527,18 @@ button, select {
   -webkit-user-select: none;
 }
 
-/* View Results Button */
+/* View Results Button — positioned at very bottom */
 .view-results-btn {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
   display: none;
   align-items: center;
   justify-content: center;
   gap: 8px;
   padding: 14px 24px;
-  margin-top: 20px;
-  background: var(--bg-glass);
+  background: rgba(255, 255, 255, 0.05);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--bg-glass-border);
@@ -455,6 +549,7 @@ button, select {
   font-weight: 500;
   cursor: pointer;
   transition: all var(--transition-fast);
+  white-space: nowrap;
 }
 
 .view-results-btn.visible {
@@ -462,7 +557,7 @@ button, select {
 }
 
 .view-results-btn:active {
-  transform: scale(0.97);
+  transform: translateX(-50%) scale(0.97);
   background: var(--accent-cyan-soft);
   border-color: rgba(0, 212, 255, 0.3);
   color: var(--accent-cyan);
