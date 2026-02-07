@@ -16,19 +16,20 @@ type echoService struct {
 }
 
 type registry struct {
-	mu       sync.RWMutex
-	services map[string]*echoService
+	mu        sync.RWMutex
+	services  map[string]*echoService
+	observers map[*websocket.Conn]struct{}
 }
 
 func newRegistry() *registry {
 	return &registry{
-		services: make(map[string]*echoService),
+		services:  make(map[string]*echoService),
+		observers: make(map[*websocket.Conn]struct{}),
 	}
 }
 
 func (r *registry) register(name string, conn *websocket.Conn) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	// Close existing connection if any
 	if existing, ok := r.services[name]; ok {
@@ -41,19 +42,79 @@ func (r *registry) register(name string, conn *websocket.Conn) {
 		ConnectedAt: time.Now(),
 	}
 	log.Printf("Echo service registered: %s", name)
+	r.mu.Unlock()
+
+	r.broadcastMachines()
 }
 
 func (r *registry) unregister(conn *websocket.Conn) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
+	// Check if it's an observer
+	if _, ok := r.observers[conn]; ok {
+		delete(r.observers, conn)
+		r.mu.Unlock()
+		log.Printf("Observer disconnected")
+		return
+	}
+
+	removed := false
 	for name, svc := range r.services {
 		if svc.Conn == conn {
 			delete(r.services, name)
 			log.Printf("Echo service unregistered: %s", name)
-			return
+			removed = true
+			break
 		}
 	}
+	r.mu.Unlock()
+
+	if removed {
+		r.broadcastMachines()
+	}
+}
+
+func (r *registry) addObserver(conn *websocket.Conn) {
+	r.mu.Lock()
+	r.observers[conn] = struct{}{}
+	r.mu.Unlock()
+	log.Printf("Observer connected")
+
+	// Send current machine list immediately
+	r.sendMachinesTo(conn)
+}
+
+func (r *registry) broadcastMachines() {
+	r.mu.RLock()
+	machines := r.listLocked()
+	observers := make([]*websocket.Conn, 0, len(r.observers))
+	for conn := range r.observers {
+		observers = append(observers, conn)
+	}
+	r.mu.RUnlock()
+
+	msg, _ := json.Marshal(map[string]interface{}{
+		"type":     "machines",
+		"machines": machines,
+	})
+
+	for _, conn := range observers {
+		if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+			log.Printf("Failed to send to observer: %v", err)
+		}
+	}
+}
+
+func (r *registry) sendMachinesTo(conn *websocket.Conn) {
+	r.mu.RLock()
+	machines := r.listLocked()
+	r.mu.RUnlock()
+
+	msg, _ := json.Marshal(map[string]interface{}{
+		"type":     "machines",
+		"machines": machines,
+	})
+	conn.WriteMessage(websocket.TextMessage, msg)
 }
 
 type machineInfo struct {
@@ -64,7 +125,11 @@ type machineInfo struct {
 func (r *registry) list() []machineInfo {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	return r.listLocked()
+}
 
+// listLocked returns the machine list. Caller must hold at least r.mu.RLock().
+func (r *registry) listLocked() []machineInfo {
 	result := make([]machineInfo, 0, len(r.services))
 	for _, svc := range r.services {
 		result = append(result, machineInfo{

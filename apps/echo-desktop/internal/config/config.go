@@ -9,8 +9,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// CurrentConfigVersion is bumped when config changes require a fresh setup.
+const CurrentConfigVersion = 1
+
 // Config holds all application configuration.
 type Config struct {
+	ConfigVersion  int    `yaml:"config_version"`
 	Name           string `yaml:"name"`
 	CoordinatorURL string `yaml:"coordinator_url"`
 	OutputMode     string `yaml:"output_mode"` // "paste" or "type"
@@ -28,6 +32,7 @@ type Config struct {
 const DefaultPort = 53937
 
 // Load reads the config from disk, or creates a default one.
+// If the config version is outdated, the config is deleted so setup runs again.
 func Load() *Config {
 	cfg := &Config{}
 	configPath := Path()
@@ -47,6 +52,16 @@ func Load() *Config {
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		log.Printf("Error parsing config: %v", err)
+	}
+
+	// Reset outdated config
+	if cfg.ConfigVersion < CurrentConfigVersion {
+		log.Printf("Config version %d is outdated (current: %d), resetting", cfg.ConfigVersion, CurrentConfigVersion)
+		os.Remove(configPath)
+		cfg = &Config{}
+		cfg.setDefaults()
+		cfg.Save()
+		return cfg
 	}
 
 	cfg.applyDefaults()
@@ -93,7 +108,8 @@ func (c *Config) IsDefaultURL() bool {
 }
 
 func (c *Config) setDefaults() {
-	c.Name = defaultName()
+	c.ConfigVersion = CurrentConfigVersion
+	c.Name = DefaultName()
 	c.CoordinatorURL = "ws://localhost:53937/ws"
 	c.OutputMode = "paste"
 	c.Port = DefaultPort
@@ -104,7 +120,7 @@ func (c *Config) setDefaults() {
 
 func (c *Config) applyDefaults() {
 	if c.Name == "" {
-		c.Name = defaultName()
+		c.Name = DefaultName()
 	}
 	if c.CoordinatorURL == "" {
 		c.CoordinatorURL = "ws://localhost:53937/ws"
@@ -123,10 +139,7 @@ func (c *Config) applyDefaults() {
 	}
 }
 
-func defaultName() string {
-	hostname, err := os.Hostname()
-	if err != nil {
-		return "echo-client"
-	}
-	return hostname
+// DefaultName returns the best available machine name for the current platform.
+func DefaultName() string {
+	return computerName()
 }

@@ -116,32 +116,68 @@ function loadTarget(): string {
   return localStorage.getItem(STORAGE_KEY) || "";
 }
 
-// Fetch available machines
+// Update machine select from a list of machines
+function updateMachineList(machines: { name: string }[]) {
+  if (machines.length === 0) {
+    machineSelect.innerHTML = '<option value="">No devices connected</option>';
+    return;
+  }
+
+  machineSelect.innerHTML = machines
+    .map((m) => `<option value="${m.name}">${m.name}</option>`)
+    .join("");
+
+  // Restore saved selection
+  const saved = loadTarget();
+  if (saved && Array.from(machineSelect.options).some(o => o.value === saved)) {
+    machineSelect.value = saved;
+  }
+}
+
+// Fetch available machines (fallback)
 async function loadMachines() {
   try {
     machineSelect.innerHTML = '<option value="">Loading...</option>';
 
     const response = await fetch(`${API_BASE}/machines`);
     const machines = await response.json();
-
-    if (machines.length === 0) {
-      machineSelect.innerHTML = '<option value="">No devices connected</option>';
-      return;
-    }
-
-    machineSelect.innerHTML = machines
-      .map((m: { name: string }) => `<option value="${m.name}">${m.name}</option>`)
-      .join("");
-
-    // Restore saved selection
-    const saved = loadTarget();
-    if (saved && Array.from(machineSelect.options).some(o => o.value === saved)) {
-      machineSelect.value = saved;
-    }
+    updateMachineList(machines);
   } catch (error) {
     machineSelect.innerHTML = '<option value="">Connection failed</option>';
     setStatus("Connection failed", "error");
   }
+}
+
+// WebSocket observer for live machine list updates
+let observerWs: WebSocket | null = null;
+
+function connectObserver() {
+  const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const wsUrl = `${wsProtocol}//${window.location.host}/ws`;
+
+  observerWs = new WebSocket(wsUrl);
+
+  observerWs.onopen = () => {
+    observerWs!.send(JSON.stringify({ type: "observe" }));
+  };
+
+  observerWs.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      if (msg.type === "machines") {
+        updateMachineList(msg.machines || []);
+      }
+    } catch {}
+  };
+
+  observerWs.onclose = () => {
+    // Reconnect after a delay
+    setTimeout(connectObserver, 3000);
+  };
+
+  observerWs.onerror = () => {
+    observerWs?.close();
+  };
 }
 
 // Save selection when changed
@@ -443,7 +479,7 @@ if ("serviceWorker" in navigator) {
 // Version chip
 document.getElementById("version-chip")!.textContent = __APP_VERSION__;
 
-// Initial load
-loadMachines();
+// Initial load — observer WebSocket pushes machine list, HTTP fetch as fallback
+connectObserver();
 setState("idle");
 hideStatus();

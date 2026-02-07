@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -79,10 +78,7 @@ func RunWizard(cfg *config.Config) error {
 	}
 
 	// Device name
-	hostname, _ := os.Hostname()
-	if hostname == "" {
-		hostname = "echo-client"
-	}
+	hostname := config.DefaultName()
 	name, err := zenity.Entry(
 		"Enter a name for this device:",
 		zenity.Title("Device Name"),

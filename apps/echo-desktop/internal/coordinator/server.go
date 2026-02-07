@@ -297,6 +297,8 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 					"name": msg.Name,
 				})
 				conn.WriteMessage(websocket.TextMessage, resp)
+			} else if msg.Type == "observe" {
+				reg.addObserver(conn)
 			}
 		}
 	}()

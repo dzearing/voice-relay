@@ -63,6 +63,7 @@ func (e *Engine) start() error {
 		"--port", fmt.Sprintf("%d", e.port),
 		"--host", "127.0.0.1",
 		"--ctx-size", "4096",
+		"--cache-ram", "0",
 	}
 
 	e.cmd = exec.Command(e.serverPath, args...)
