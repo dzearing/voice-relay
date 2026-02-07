@@ -12,6 +12,10 @@ const rawTextEl = document.getElementById("raw-text") as HTMLDivElement;
 const resendCleanedBtn = document.getElementById("resend-cleaned-btn") as HTMLButtonElement;
 const resendRawBtn = document.getElementById("resend-raw-btn") as HTMLButtonElement;
 const timingInfoEl = document.getElementById("timing-info") as HTMLDivElement;
+const settingsBtn = document.getElementById("settings-btn") as HTMLButtonElement;
+const settingsOverlay = document.getElementById("settings-overlay") as HTMLDivElement;
+const closeSettingsBtn = document.getElementById("close-settings-btn") as HTMLButtonElement;
+const voiceListEl = document.getElementById("voice-list") as HTMLDivElement;
 
 // State
 type AppState = "idle" | "recording" | "sending";
@@ -354,6 +358,10 @@ async function sendAudio() {
       setStatus("Sent!", "success");
       setTimeout(hideStatus, 2000);
       showResultsButton(result.rawText, result.cleanedText, result.sttMs, result.llmMs, totalMs);
+      // Play TTS audio feedback if included
+      if (result.ttsAudio) {
+        playBase64Audio(result.ttsAudio);
+      }
       audioBlob = null;
       setState("idle");
     } else {
@@ -366,6 +374,20 @@ async function sendAudio() {
     setState("idle");
     setTimeout(hideStatus, 3000);
   }
+}
+
+// Play base64-encoded WAV audio
+function playBase64Audio(b64: string) {
+  const binaryString = atob(b64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  const blob = new Blob([bytes], { type: "audio/wav" });
+  const url = URL.createObjectURL(blob);
+  const audio = new Audio(url);
+  audio.play().catch(() => {});
+  audio.onended = () => URL.revokeObjectURL(url);
 }
 
 // Press-and-hold interaction:
@@ -453,6 +475,143 @@ async function sendText(text: string) {
 // Resend buttons
 resendCleanedBtn.addEventListener("click", () => sendText(lastCleanedText));
 resendRawBtn.addEventListener("click", () => sendText(lastRawText));
+
+// --- Settings / Voice selector ---
+const VOICE_PRESETS = [
+  { id: "en_US-lessac-medium", name: "Lessac", desc: "Neutral American (default)" },
+  { id: "en_US-amy-medium", name: "Amy", desc: "Warm American female" },
+  { id: "en_US-ryan-medium", name: "Ryan", desc: "Clear American male" },
+  { id: "en_GB-alba-medium", name: "Alba", desc: "Scottish English" },
+  { id: "en_GB-cori-medium", name: "Cori", desc: "British English female" },
+];
+
+let currentVoice = "en_US-lessac-medium";
+
+function openSettings() {
+  settingsOverlay.classList.add("visible");
+  document.body.style.overflow = "hidden";
+  loadCurrentVoice();
+}
+
+function closeSettings() {
+  settingsOverlay.classList.remove("visible");
+  document.body.style.overflow = "";
+}
+
+async function loadCurrentVoice() {
+  try {
+    const resp = await fetch(`${API_BASE}/tts-voice`);
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.voice) currentVoice = data.voice;
+    }
+  } catch {}
+  renderVoiceList();
+}
+
+function renderVoiceList() {
+  voiceListEl.innerHTML = VOICE_PRESETS.map((v) => `
+    <div class="voice-item${v.id === currentVoice ? " active" : ""}" data-voice="${v.id}">
+      <div class="voice-item-check">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="20 6 9 17 4 12"/>
+        </svg>
+      </div>
+      <div class="voice-item-info">
+        <div class="voice-item-name">${v.name}</div>
+        <div class="voice-item-desc">${v.desc}</div>
+      </div>
+      <button class="voice-preview-btn" data-voice="${v.id}" aria-label="Preview ${v.name}">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+          <polygon points="5 3 19 12 5 21 5 3"/>
+        </svg>
+      </button>
+    </div>
+  `).join("");
+
+  // Select voice on row tap
+  voiceListEl.querySelectorAll(".voice-item").forEach((el) => {
+    el.addEventListener("click", (e) => {
+      // Don't select when tapping the preview button
+      if ((e.target as HTMLElement).closest(".voice-preview-btn")) return;
+      const voice = (el as HTMLElement).dataset.voice!;
+      selectVoice(voice);
+    });
+  });
+
+  // Preview button
+  voiceListEl.querySelectorAll(".voice-preview-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const voice = (btn as HTMLElement).dataset.voice!;
+      previewVoice(voice, btn as HTMLButtonElement);
+    });
+  });
+}
+
+async function selectVoice(voice: string) {
+  if (voice === currentVoice) return;
+
+  // Optimistic update
+  currentVoice = voice;
+  renderVoiceList();
+
+  try {
+    const resp = await fetch(`${API_BASE}/tts-voice`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ voice }),
+    });
+    if (!resp.ok) {
+      const data = await resp.json();
+      console.error("Voice change failed:", data.error);
+    }
+  } catch (err) {
+    console.error("Voice change failed:", err);
+  }
+}
+
+async function previewVoice(voice: string, btn: HTMLButtonElement) {
+  // First switch to this voice so piper uses the right model
+  if (voice !== currentVoice) {
+    currentVoice = voice;
+    renderVoiceList();
+    try {
+      await fetch(`${API_BASE}/tts-voice`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ voice }),
+      });
+    } catch {}
+  }
+
+  // Show loading state
+  btn.classList.add("loading");
+  btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>`;
+
+  try {
+    const resp = await fetch(`${API_BASE}/tts-preview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "Hello, this is how I sound." }),
+    });
+    if (resp.ok) {
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.play().catch(() => {});
+      audio.onended = () => URL.revokeObjectURL(url);
+    }
+  } catch {}
+
+  // Restore button
+  btn.classList.remove("loading");
+  btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
+}
+
+settingsBtn.addEventListener("click", openSettings);
+closeSettingsBtn.addEventListener("click", closeSettings);
+settingsOverlay.querySelector(".overlay-backdrop")?.addEventListener("click", closeSettings);
 
 // Register service worker
 if ("serviceWorker" in navigator) {

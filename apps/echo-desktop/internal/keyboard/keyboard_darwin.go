@@ -21,14 +21,21 @@ func Paste() error {
 }
 
 // HasAccessibility returns true if this process has Accessibility permission on macOS.
+// We test by actually trying a harmless System Events query — if it fails with an
+// error about assistive access, we know the permission is missing.
 func HasAccessibility() bool {
-	script := `use framework "ApplicationServices"
-return (current application's AXIsProcessTrusted()) as boolean`
-	out, err := exec.Command("osascript", "-e", script).Output()
+	// Try a harmless System Events action that requires Accessibility
+	script := `tell application "System Events" to get name of first process`
+	out, err := exec.Command("osascript", "-e", script).CombinedOutput()
 	if err != nil {
-		return false
+		output := strings.ToLower(string(out))
+		// "not allowed assistive access" or "assistive access" = permission denied
+		if strings.Contains(output, "assistive") || strings.Contains(output, "not allowed") {
+			return false
+		}
+		// Other errors (e.g. no processes) don't mean permission is missing
 	}
-	return strings.TrimSpace(string(out)) == "true"
+	return true
 }
 
 // OpenAccessibilitySettings opens System Settings to the Accessibility pane.

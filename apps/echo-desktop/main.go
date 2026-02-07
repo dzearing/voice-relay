@@ -25,6 +25,7 @@ import (
 	"github.com/voice-relay/echo-desktop/internal/setup"
 	"github.com/voice-relay/echo-desktop/internal/stt"
 	"github.com/voice-relay/echo-desktop/internal/tray"
+	"github.com/voice-relay/echo-desktop/internal/tts"
 	"github.com/voice-relay/echo-desktop/internal/updater"
 )
 
@@ -33,6 +34,7 @@ var (
 	echoClient *client.Client
 	sttEngine  *stt.Engine
 	llmEngine  *llm.Engine
+	ttsEngine  *tts.Engine
 )
 
 func main() {
@@ -288,10 +290,45 @@ func initCoordinator() {
 					log.Printf("Failed to initialize LLM engine: %v", err)
 				} else {
 					llmEngine = engine
-					coordinator.SetLLMFunc(func(rawText string) (string, error) {
+					coordinator.SetLLMFunc(func(rawText string) (string, string, error) {
 						return llmEngine.CleanupText(rawText)
 					})
 				}
+			}
+		}
+	}
+
+	// Initialize TTS engine
+	if cfg.TTSEnabled {
+		piperPath, err := tts.EnsureServer(binDir)
+		if err != nil {
+			log.Printf("Piper TTS not available: %v", err)
+		} else {
+			voiceName := cfg.TTSVoice
+			if voiceName == "" || voiceName == "default" {
+				voiceName = "en_US-lessac-medium"
+			}
+			modelPath, err := tts.EnsureVoice(modelsDir, voiceName)
+			if err != nil {
+				log.Printf("TTS voice not available: %v", err)
+			} else {
+				ttsEngine = tts.NewEngine(piperPath, modelPath)
+				coordinator.SetTTSFunc(func(text, voice, lang string) ([]byte, error) {
+					return ttsEngine.Synthesize(text)
+				})
+				coordinator.SetTTSVoice(voiceName)
+				coordinator.SetTTSChangeFunc(func(newVoice string) error {
+					newModelPath, err := tts.EnsureVoice(modelsDir, newVoice)
+					if err != nil {
+						return err
+					}
+					ttsEngine = tts.NewEngine(piperPath, newModelPath)
+					cfg.TTSVoice = newVoice
+					cfg.Save()
+					log.Printf("TTS voice changed to: %s", newVoice)
+					return nil
+				})
+				log.Printf("TTS engine ready (Piper)")
 			}
 		}
 	}
@@ -311,6 +348,9 @@ func onExit() {
 	}
 	if llmEngine != nil {
 		llmEngine.Close()
+	}
+	if ttsEngine != nil {
+		ttsEngine.Close()
 	}
 }
 

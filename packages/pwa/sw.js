@@ -1,28 +1,35 @@
-const CACHE_NAME = "voice-relay-v1";
-const ASSETS = ["/", "/index.html", "/src/main.ts", "/src/style.css"];
+const CACHE_NAME = "voice-relay-v2";
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
-  );
+  self.skipWaiting();
 });
 
 self.addEventListener("fetch", (event) => {
-  // Only cache GET requests
+  // Only cache GET requests for static assets
   if (event.request.method !== "GET") {
     return;
   }
 
-  // Don't cache API requests
-  if (event.request.url.includes("/machines") ||
-      event.request.url.includes("/transcribe")) {
+  // Don't cache API, WebSocket, or dynamic requests
+  const url = new URL(event.request.url);
+  if (url.pathname.startsWith("/machines") ||
+      url.pathname.startsWith("/transcribe") ||
+      url.pathname.startsWith("/tts-") ||
+      url.pathname.startsWith("/send-text") ||
+      url.pathname.startsWith("/ws") ||
+      url.pathname.startsWith("/health")) {
     return;
   }
 
+  // Network-first: always try fresh, fall back to cache for offline
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      return cached || fetch(event.request);
-    })
+    fetch(event.request)
+      .then((response) => {
+        const clone = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        return response;
+      })
+      .catch(() => caches.match(event.request))
   );
 });
 
@@ -34,6 +41,6 @@ self.addEventListener("activate", (event) => {
           .filter((key) => key !== CACHE_NAME)
           .map((key) => caches.delete(key))
       );
-    })
+    }).then(() => self.clients.claim())
   );
 });

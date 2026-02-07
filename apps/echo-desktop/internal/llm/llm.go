@@ -13,17 +13,25 @@ import (
 	"time"
 )
 
-const systemPrompt = `You are a speech-to-text post-processor. Your ONLY job is to clean up transcribed speech.
+const systemPrompt = `You are a speech-to-text post-processor. You do two things:
 
-STEP 1: Remove filler words (uh, um, like, you know).
-STEP 2: When the speaker corrects themselves, ONLY keep the correction:
-- "X. I mean Y" = speaker wants Y, not X
-- "X, no wait, Y" = speaker wants Y, not X
-- "X, actually Y" = speaker wants Y, not X
-- "X, no Y" = speaker wants Y, not X
-STEP 3: If already clean, return unchanged.
+1. CLEAN the transcribed text:
+   - Remove filler words (uh, um, like, you know)
+   - When the speaker corrects themselves, ONLY keep the correction:
+     "X. I mean Y" → keep Y. "X, no wait, Y" → keep Y.
+   - If already clean, keep unchanged.
 
-Reply with ONLY the cleaned sentence.`
+2. SUMMARIZE in a few words what the message is about.
+
+Reply with ONLY a JSON object, no other text:
+{"cleaned": "the cleaned text", "summary": "2-5 word summary"}
+
+Examples:
+Input: "uh can you pick up um some milk on the way home"
+Output: {"cleaned": "Can you pick up some milk on the way home?", "summary": "picking up milk"}
+
+Input: "hey the meeting is at 3, no wait, 4 pm"
+Output: {"cleaned": "Hey, the meeting is at 4 PM.", "summary": "meeting time update"}`
 
 // Engine manages llama-server as a subprocess for text cleanup.
 type Engine struct {
@@ -103,7 +111,8 @@ func (e *Engine) waitReady(timeout time.Duration) error {
 }
 
 // CleanupText sends raw transcribed text through the LLM for cleanup.
-func (e *Engine) CleanupText(rawText string) (string, error) {
+// Returns (cleaned text, summary, error).
+func (e *Engine) CleanupText(rawText string) (string, string, error) {
 	type message struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
@@ -122,14 +131,14 @@ func (e *Engine) CleanupText(rawText string) (string, error) {
 	resp, err := http.Post(e.apiURL+"/v1/chat/completions", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		log.Printf("LLM request failed, returning raw text: %v", err)
-		return rawText, nil
+		return rawText, "", nil
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		log.Printf("LLM error %d: %s, returning raw text", resp.StatusCode, string(body))
-		return rawText, nil
+		return rawText, "", nil
 	}
 
 	var data struct {
@@ -141,11 +150,11 @@ func (e *Engine) CleanupText(rawText string) (string, error) {
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		log.Printf("Failed to decode LLM response: %v, returning raw text", err)
-		return rawText, nil
+		return rawText, "", nil
 	}
 
 	if len(data.Choices) == 0 {
-		return rawText, nil
+		return rawText, "", nil
 	}
 
 	result := data.Choices[0].Message.Content
@@ -157,15 +166,24 @@ func (e *Engine) CleanupText(rawText string) (string, error) {
 
 	result = strings.TrimSpace(result)
 
-	// Remove leading/trailing quotes
-	result = strings.Trim(result, "\"'")
+	// Try to parse as JSON {"cleaned": "...", "summary": "..."}
+	var parsed struct {
+		Cleaned string `json:"cleaned"`
+		Summary string `json:"summary"`
+	}
+	if err := json.Unmarshal([]byte(result), &parsed); err == nil && parsed.Cleaned != "" {
+		log.Printf("LLM cleanup: %q -> %q (summary: %q)", rawText, parsed.Cleaned, parsed.Summary)
+		return parsed.Cleaned, parsed.Summary, nil
+	}
 
-	log.Printf("LLM cleanup: %q -> %q", rawText, result)
+	// Fallback: treat the whole response as cleaned text (no summary)
+	result = strings.Trim(result, "\"'")
+	log.Printf("LLM cleanup (no JSON): %q -> %q", rawText, result)
 
 	if result == "" {
-		return rawText, nil
+		return rawText, "", nil
 	}
-	return result, nil
+	return result, "", nil
 }
 
 // Close stops the llama-server subprocess.

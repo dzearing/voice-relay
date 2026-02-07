@@ -1,6 +1,7 @@
 package coordinator
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"log"
 	"sync"
@@ -138,6 +139,28 @@ func (r *registry) listLocked() []machineInfo {
 		})
 	}
 	return result
+}
+
+// broadcastAudio sends base64-encoded WAV audio to all observer connections.
+func (r *registry) broadcastAudio(wavData []byte) {
+	r.mu.RLock()
+	observers := make([]*websocket.Conn, 0, len(r.observers))
+	for conn := range r.observers {
+		observers = append(observers, conn)
+	}
+	r.mu.RUnlock()
+
+	b64 := base64.StdEncoding.EncodeToString(wavData)
+	msg, _ := json.Marshal(map[string]string{
+		"type": "audio",
+		"data": b64,
+	})
+
+	for _, conn := range observers {
+		if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+			log.Printf("Failed to send audio to observer: %v", err)
+		}
+	}
 }
 
 func (r *registry) sendText(name, text string) bool {

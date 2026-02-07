@@ -16,12 +16,15 @@ import (
 )
 
 var (
-	reg           *registry
-	sttFunc       func(audioData []byte, filename string) (string, error)
-	llmFunc       func(rawText string) (string, error)
-	funcMu        sync.RWMutex
+	reg             *registry
+	sttFunc         func(audioData []byte, filename string) (string, error)
+	llmFunc         func(rawText string) (string, string, error)
+	ttsFunc         func(text, voice, language string) ([]byte, error)
+	ttsChangeFunc   func(voiceName string) error // callback to switch voice at runtime
+	funcMu          sync.RWMutex
 	coordinatorPort int
-	externalURL   string // e.g. "http://100.x.x.x:53937" for Tailscale
+	externalURL     string // e.g. "http://100.x.x.x:53937" for Tailscale
+	ttsVoice        string // configured TTS voice name
 )
 
 var (
@@ -66,10 +69,30 @@ func SetSTTFunc(fn func(audioData []byte, filename string) (string, error)) {
 }
 
 // SetLLMFunc sets the text cleanup function used by the /transcribe endpoint.
-func SetLLMFunc(fn func(rawText string) (string, error)) {
+// The function returns (cleaned text, summary, error).
+func SetLLMFunc(fn func(rawText string) (string, string, error)) {
 	funcMu.Lock()
 	defer funcMu.Unlock()
 	llmFunc = fn
+}
+
+// SetTTSFunc sets the text-to-speech function for audio feedback.
+func SetTTSFunc(fn func(text, voice, language string) ([]byte, error)) {
+	funcMu.Lock()
+	defer funcMu.Unlock()
+	ttsFunc = fn
+}
+
+// SetTTSVoice sets the configured TTS voice name.
+func SetTTSVoice(voice string) {
+	ttsVoice = voice
+}
+
+// SetTTSChangeFunc sets the callback to switch TTS voice at runtime.
+func SetTTSChangeFunc(fn func(voiceName string) error) {
+	funcMu.Lock()
+	defer funcMu.Unlock()
+	ttsChangeFunc = fn
 }
 
 var upgrader = websocket.Upgrader{
@@ -91,6 +114,8 @@ func Start(port int) error {
 	mux.HandleFunc("/ws", handleWebSocket)
 	mux.HandleFunc("/connect", handleConnect)
 	mux.HandleFunc("/connect-info", handleConnectInfo)
+	mux.HandleFunc("/tts-voice", handleTTSVoice)
+	mux.HandleFunc("/tts-preview", handleTTSPreview)
 
 	// Serve PWA static files (fallback for all other routes)
 	mux.Handle("/", pwaHandler())
@@ -224,18 +249,20 @@ func handleTranscribe(w http.ResponseWriter, r *http.Request) {
 
 	// 2. Clean up text with LLM
 	cleanedText := rawText
+	summary := ""
 	var llmMs int64
 	if cleanupFn != nil {
 		llmStart := time.Now()
-		cleaned, err := cleanupFn(rawText)
+		cleaned, sum, err := cleanupFn(rawText)
 		llmMs = time.Since(llmStart).Milliseconds()
 		if err != nil {
 			log.Printf("LLM cleanup failed (%dms), using raw text: %v", llmMs, err)
 		} else {
 			cleanedText = cleaned
+			summary = sum
 		}
 	}
-	log.Printf("Cleaned text (%dms): %s", llmMs, cleanedText)
+	log.Printf("Cleaned text (%dms): %s (summary: %s)", llmMs, cleanedText, summary)
 
 	// 3. Send to target
 	if !reg.sendText(target, cleanedText) {
@@ -251,14 +278,40 @@ func handleTranscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, map[string]interface{}{
+	// 4. TTS feedback — returned inline so only the requesting client gets it
+	var ttsB64 string
+	funcMu.RLock()
+	speakFn := ttsFunc
+	funcMu.RUnlock()
+	if speakFn != nil {
+		responseText := buildTTSResponse(cleanedText, summary, target)
+		voice := ttsVoice
+		if voice == "" {
+			voice = "default"
+		}
+		ttsStart := time.Now()
+		ttsAudio, err := speakFn(responseText, voice, "English")
+		ttsMs := time.Since(ttsStart).Milliseconds()
+		if err != nil {
+			log.Printf("TTS failed (%dms): %v", ttsMs, err)
+		} else {
+			ttsB64 = base64.StdEncoding.EncodeToString(ttsAudio)
+			log.Printf("TTS: %d bytes (%dms)", len(ttsAudio), ttsMs)
+		}
+	}
+
+	resp := map[string]interface{}{
 		"success":     true,
 		"rawText":     rawText,
 		"cleanedText": cleanedText,
 		"target":      target,
 		"sttMs":       sttMs,
 		"llmMs":       llmMs,
-	})
+	}
+	if ttsB64 != "" {
+		resp["ttsAudio"] = ttsB64
+	}
+	writeJSON(w, resp)
 }
 
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -401,4 +454,101 @@ func handleConnect(w http.ResponseWriter, r *http.Request) {
     Install Voice Relay, then enter the connection code when prompted during setup.
   </div>
 </div></body></html>`, b64, url, codeSection)
+}
+
+// buildTTSResponse creates a natural-sounding spoken confirmation.
+func buildTTSResponse(message, summary, target string) string {
+	// Use the LLM summary if available, otherwise fall back to message snippet
+	topic := summary
+	if topic == "" {
+		topic = message
+		if len(topic) > 60 {
+			if i := strings.LastIndex(topic[:60], " "); i > 30 {
+				topic = topic[:i]
+			} else {
+				topic = topic[:60]
+			}
+		}
+	}
+
+	// Vary the phrasing so it doesn't feel robotic
+	phrases := []string{
+		fmt.Sprintf("Got it, sent your note about %s to %s.", topic, target),
+		fmt.Sprintf("Done! Your message about %s is on its way to %s.", topic, target),
+		fmt.Sprintf("All set. Sent %s the note about %s.", target, topic),
+		fmt.Sprintf("Sent! %s will get your message about %s.", target, topic),
+	}
+
+	return phrases[len(message)%len(phrases)]
+}
+
+func handleTTSVoice(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		writeJSON(w, map[string]string{"voice": ttsVoice})
+	case "POST":
+		var body struct {
+			Voice string `json:"voice"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Voice == "" {
+			writeJSONError(w, "Missing voice name", http.StatusBadRequest)
+			return
+		}
+		funcMu.RLock()
+		changeFn := ttsChangeFunc
+		funcMu.RUnlock()
+		if changeFn == nil {
+			writeJSONError(w, "TTS not available", http.StatusServiceUnavailable)
+			return
+		}
+		if err := changeFn(body.Voice); err != nil {
+			writeJSONError(w, fmt.Sprintf("Failed to switch voice: %v", err), http.StatusInternalServerError)
+			return
+		}
+		ttsVoice = body.Voice
+		writeJSON(w, map[string]string{"voice": ttsVoice})
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func handleTTSPreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSONError(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	text := body.Text
+	if text == "" {
+		text = "Hello, this is a preview of my voice."
+	}
+
+	funcMu.RLock()
+	speakFn := ttsFunc
+	funcMu.RUnlock()
+	if speakFn == nil {
+		writeJSONError(w, "TTS not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	voice := ttsVoice
+	if voice == "" {
+		voice = "default"
+	}
+
+	audioData, err := speakFn(text, voice, "English")
+	if err != nil {
+		writeJSONError(w, fmt.Sprintf("TTS failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "audio/wav")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(audioData)))
+	w.Write(audioData)
 }

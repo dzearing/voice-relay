@@ -26,6 +26,8 @@ type Config struct {
 	WhisperModel     string `yaml:"whisper_model,omitempty"`  // default "base"
 	LLMModel         string `yaml:"llm_model,omitempty"`      // default "qwen3-0.6b"
 	LLMEnabled       bool   `yaml:"llm_enabled,omitempty"`    // default true
+	TTSEnabled       bool   `yaml:"tts_enabled,omitempty"`    // default false
+	TTSVoice         string `yaml:"tts_voice,omitempty"`      // piper voice model, default "en_US-lessac-medium"
 }
 
 // DefaultPort is the default coordinator port.
@@ -116,6 +118,7 @@ func (c *Config) setDefaults() {
 	c.WhisperModel = "base"
 	c.LLMModel = "qwen3-4b"
 	c.LLMEnabled = true
+	c.TTSVoice = "en_US-lessac-medium"
 }
 
 func (c *Config) applyDefaults() {
@@ -136,6 +139,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.LLMModel == "" || c.LLMModel == "qwen3-0.6b" {
 		c.LLMModel = "qwen3-4b"
+	}
+	if c.TTSVoice == "" {
+		c.TTSVoice = "en_US-lessac-medium"
 	}
 }
 

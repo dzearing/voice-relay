@@ -31,6 +31,9 @@ Thumbs.db
 apps/echo-desktop/voice-relay-echo*
 apps/echo-desktop/VoiceRelay*
 
+# Git worktrees
+.worktrees/
+
 # Embedded PWA dist (copied at build time)
 apps/echo-desktop/internal/coordinator/pwa_dist/*
 !apps/echo-desktop/internal/coordinator/pwa_dist/.gitkeep

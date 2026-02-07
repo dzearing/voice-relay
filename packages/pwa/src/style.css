@@ -170,6 +170,31 @@ header h1 {
   color: var(--text-primary);
 }
 
+/* Settings gear button */
+.settings-btn {
+  position: absolute;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--bg-glass-border);
+  border-radius: 50%;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.settings-btn:active {
+  transform: scale(0.93);
+  background: var(--accent-cyan-soft);
+  border-color: rgba(0, 212, 255, 0.3);
+  color: var(--accent-cyan);
+}
+
 .version-chip {
   position: absolute;
   right: 20px;
@@ -719,4 +744,147 @@ button, select {
   background: var(--accent-cyan-soft);
   border-color: rgba(0, 212, 255, 0.3);
   color: var(--accent-cyan);
+}
+
+/* Settings Overlay — same pattern as results overlay */
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-medium);
+}
+
+.settings-overlay.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.settings-overlay .overlay-content {
+  max-height: 70vh;
+}
+
+.settings-overlay.visible .overlay-content {
+  transform: translateY(0);
+}
+
+.settings-body {
+  padding: 20px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  flex: 1;
+}
+
+.settings-section-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  margin-bottom: 12px;
+}
+
+/* Voice list — iOS-style grouped list */
+.voice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--bg-glass-border);
+}
+
+.voice-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+  text-align: left;
+  width: 100%;
+  font-family: inherit;
+  color: var(--text-primary);
+}
+
+.voice-item:not(:last-child) {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.voice-item:active {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.voice-item.active {
+  background: rgba(0, 212, 255, 0.08);
+}
+
+.voice-item-check {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-cyan);
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.voice-item.active .voice-item-check {
+  opacity: 1;
+}
+
+.voice-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.voice-item-name {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.voice-item-desc {
+  font-size: 0.78rem;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+.voice-preview-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--bg-glass-border);
+  border-radius: 50%;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.voice-preview-btn:active {
+  transform: scale(0.9);
+  background: var(--accent-cyan-soft);
+  border-color: rgba(0, 212, 255, 0.3);
+  color: var(--accent-cyan);
+}
+
+.voice-preview-btn.loading {
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+.voice-preview-btn.loading svg {
+  animation: spin 1s linear infinite;
 }
