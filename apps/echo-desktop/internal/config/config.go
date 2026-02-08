@@ -27,7 +27,7 @@ type Config struct {
 	LLMModel         string `yaml:"llm_model,omitempty"`      // default "qwen3-0.6b"
 	LLMEnabled       bool   `yaml:"llm_enabled,omitempty"`    // default true
 	TTSEnabled       bool   `yaml:"tts_enabled,omitempty"`    // default false
-	TTSVoice         string `yaml:"tts_voice,omitempty"`      // piper voice model, default "en_US-lessac-medium"
+	TTSVoice         string `yaml:"tts_voice,omitempty"`      // piper voice model, default "en_US-lessac-high"
 }
 
 // DefaultPort is the default coordinator port.
@@ -115,10 +115,10 @@ func (c *Config) setDefaults() {
 	c.CoordinatorURL = "ws://localhost:53937/ws"
 	c.OutputMode = "paste"
 	c.Port = DefaultPort
-	c.WhisperModel = "base"
+	c.WhisperModel = "small"
 	c.LLMModel = "qwen3-4b"
 	c.LLMEnabled = true
-	c.TTSVoice = "en_US-lessac-medium"
+	c.TTSVoice = "en_US-lessac-high"
 }
 
 func (c *Config) applyDefaults() {
@@ -134,14 +134,14 @@ func (c *Config) applyDefaults() {
 	if c.Port == 0 {
 		c.Port = DefaultPort
 	}
-	if c.WhisperModel == "" {
-		c.WhisperModel = "base"
+	if c.WhisperModel == "" || c.WhisperModel == "base" {
+		c.WhisperModel = "small"
 	}
 	if c.LLMModel == "" || c.LLMModel == "qwen3-0.6b" {
 		c.LLMModel = "qwen3-4b"
 	}
 	if c.TTSVoice == "" {
-		c.TTSVoice = "en_US-lessac-medium"
+		c.TTSVoice = "en_US-lessac-high"
 	}
 }
 

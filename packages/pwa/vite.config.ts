@@ -11,6 +11,20 @@ export default defineConfig({
   },
   server: {
     port: 5001,
+    proxy: {
+      "/ws": {
+        target: "ws://localhost:53937",
+        ws: true,
+      },
+      "/transcribe": "http://localhost:53937",
+      "/send-text": "http://localhost:53937",
+      "/health": "http://localhost:53937",
+      "/machines": "http://localhost:53937",
+      "/connect": "http://localhost:53937",
+      "/connect-info": "http://localhost:53937",
+      "/tts-voice": "http://localhost:53937",
+      "/tts-preview": "http://localhost:53937",
+    },
   },
   plugins: [
     {

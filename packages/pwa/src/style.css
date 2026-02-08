@@ -354,6 +354,66 @@ main {
   gap: 16px;
 }
 
+/* Transcription text — shown above button after STT in talk mode */
+.transcription-text {
+  text-align: center;
+  font-style: italic;
+  font-size: 0.9rem;
+  color: var(--text-tertiary);
+  padding: 12px 4px 0;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity var(--transition-medium), transform var(--transition-medium);
+}
+
+.transcription-text.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Thinking indicator — animated dots below transcription text */
+.thinking-indicator {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 0 0;
+  opacity: 0;
+  transition: opacity var(--transition-medium);
+  pointer-events: none;
+}
+
+.thinking-indicator.visible {
+  opacity: 1;
+}
+
+.thinking-indicator span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-cyan);
+  animation: thinking-bounce 1.4s ease-in-out infinite;
+}
+
+.thinking-indicator span:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.thinking-indicator span:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+@keyframes thinking-bounce {
+  0%, 80%, 100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}
+
 /* Main action button — glassy translucent */
 .main-btn {
   position: relative;

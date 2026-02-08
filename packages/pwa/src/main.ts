@@ -19,6 +19,9 @@ const voiceListEl = document.getElementById("voice-list") as HTMLDivElement;
 const resultHeaderPrimary = document.getElementById("result-header-primary") as HTMLDivElement;
 const resultHeaderSecondary = document.getElementById("result-header-secondary") as HTMLDivElement;
 
+const transcriptionTextEl = document.getElementById("transcription-text") as HTMLDivElement;
+const thinkingIndicator = document.getElementById("thinking-indicator") as HTMLDivElement;
+
 // Action card elements
 const actionCard = document.getElementById("action-card") as HTMLDivElement;
 const actionSummary = document.getElementById("action-summary") as HTMLDivElement;
@@ -59,6 +62,9 @@ function primeAudio() {
   ensureAudioContext();
 }
 
+// Unique session ID for scoping agent_status events to this window
+const SESSION_ID = crypto.randomUUID();
+
 // Get API base URL
 const API_BASE = window.location.origin;
 
@@ -87,6 +93,25 @@ function hideStatus() {
   statusEl.classList.remove("visible");
 }
 
+// Transcription text helpers (talk mode only)
+function showTranscription(text: string) {
+  transcriptionTextEl.textContent = `"${text}"`;
+  transcriptionTextEl.classList.add("visible");
+}
+
+function hideTranscription() {
+  transcriptionTextEl.classList.remove("visible");
+  thinkingIndicator.classList.remove("visible");
+}
+
+function showThinking() {
+  thinkingIndicator.classList.add("visible");
+}
+
+function hideThinking() {
+  thinkingIndicator.classList.remove("visible");
+}
+
 // Store current results for resending
 let lastRawText = "";
 let lastCleanedText = "";
@@ -110,7 +135,12 @@ function showResultsButton(rawText: string, cleanedText: string, sttMs?: number,
   timingInfoEl.textContent = parts.join(" \u00B7 ");
 }
 
-function showTalkResults(rawText: string, agentResponse: string, sttMs?: number, agentMs?: number, totalMs?: number) {
+interface TimingEntry {
+  label: string;
+  ms: number;
+}
+
+function showTalkResults(rawText: string, agentResponse: string, sttMs?: number, agentMs?: number, totalMs?: number, timings?: TimingEntry[]) {
   lastRawText = rawText;
   lastCleanedText = agentResponse;
 
@@ -129,10 +159,16 @@ function showTalkResults(rawText: string, agentResponse: string, sttMs?: number,
 
   viewResultsBtn.classList.add("visible");
 
-  // Build timing string
+  // Build detailed timing string
   const parts: string[] = [];
   if (sttMs != null && sttMs > 0) parts.push(`STT ${formatMs(sttMs)}`);
-  if (agentMs != null && agentMs > 0) parts.push(`Agent ${formatMs(agentMs)}`);
+  if (timings && timings.length > 0) {
+    for (const t of timings) {
+      parts.push(`${t.label} ${formatMs(t.ms)}`);
+    }
+  } else if (agentMs != null && agentMs > 0) {
+    parts.push(`Agent ${formatMs(agentMs)}`);
+  }
   if (totalMs != null && totalMs > 0) parts.push(`Total ${formatMs(totalMs)}`);
   timingInfoEl.textContent = parts.join(" \u00B7 ");
 }
@@ -264,7 +300,7 @@ function connectObserver() {
   observerWs = new WebSocket(wsUrl);
 
   observerWs.onopen = () => {
-    observerWs!.send(JSON.stringify({ type: "observe" }));
+    observerWs!.send(JSON.stringify({ type: "observe", sessionId: SESSION_ID }));
   };
 
   observerWs.onmessage = (event) => {
@@ -573,7 +609,13 @@ function stopChime() {
 let agentChiming = false;
 
 function handleAgentStatus(msg: Record<string, unknown>) {
-  if (msg.state === "searching") {
+  console.log("[agent_status]", msg.state, msg);
+  if (msg.state === "transcribed") {
+    if (msg.text) {
+      showTranscription(msg.text as string);
+      showThinking();
+    }
+  } else if (msg.state === "searching") {
     setStatus("Searching...", "sending");
     // Play interim spoken response if included
     if (msg.ttsAudio) {
@@ -619,6 +661,7 @@ async function sendAudio() {
     const formData = new FormData();
     formData.append("audio", audioBlob, "recording.wav");
     formData.append("mode", currentMode);
+    formData.append("sessionId", SESSION_ID);
     if (currentMode === "relay") {
       formData.append("target", target);
     }
@@ -638,6 +681,9 @@ async function sendAudio() {
       stopChime();
     }
 
+    // Hide transcription text when response arrives
+    hideTranscription();
+
     if (response.ok && result.noSpeech) {
       stopGestureAudio();
       audioBlob = null;
@@ -646,7 +692,7 @@ async function sendAudio() {
     } else if (response.ok && result.mode === "talk") {
       setStatus("Done!", "success");
       setTimeout(hideStatus, 2000);
-      showTalkResults(result.rawText, result.agentResponse, result.sttMs, result.agentMs, totalMs);
+      showTalkResults(result.rawText, result.agentResponse, result.sttMs, result.agentMs, totalMs, result.timings);
       if (result.ttsAudio) {
         // playBase64Audio reuses the gesture-unlocked Audio element
         playBase64Audio(result.ttsAudio);
@@ -771,14 +817,18 @@ resendRawBtn.addEventListener("click", () => sendText(lastRawText));
 
 // --- Settings / Voice selector ---
 const VOICE_PRESETS = [
-  { id: "en_US-lessac-medium", name: "Lessac", desc: "Neutral American (default)" },
+  { id: "en_US-lessac-high", name: "Lessac", desc: "Neutral American (default)" },
   { id: "en_US-amy-medium", name: "Amy", desc: "Warm American female" },
-  { id: "en_US-ryan-medium", name: "Ryan", desc: "Clear American male" },
+  { id: "en_US-ryan-high", name: "Ryan", desc: "Clear American male" },
+  { id: "en_US-joe-medium", name: "Joe", desc: "Casual American male" },
+  { id: "en_US-kristin-medium", name: "Kristin", desc: "American female" },
   { id: "en_GB-alba-medium", name: "Alba", desc: "Scottish English" },
-  { id: "en_GB-cori-medium", name: "Cori", desc: "British English female" },
+  { id: "en_GB-cori-high", name: "Cori", desc: "British English female" },
+  { id: "en_GB-jenny_dioco-medium", name: "Jenny", desc: "British English female" },
+  { id: "en_GB-northern_english_male-medium", name: "Northern", desc: "Northern English male" },
 ];
 
-let currentVoice = "en_US-lessac-medium";
+let currentVoice = "en_US-lessac-high";
 
 function openSettings() {
   settingsOverlay.classList.add("visible");
@@ -891,6 +941,39 @@ async function previewVoice(voice: string, btn: HTMLElement) {
 settingsBtn.addEventListener("click", openSettings);
 closeSettingsBtn.addEventListener("click", closeSettings);
 settingsOverlay.querySelector(".overlay-backdrop")?.addEventListener("click", closeSettings);
+
+// Dev-only test button: generates a WAV with tones and sends through normal flow
+if (__APP_VERSION__ === "local dev") {
+  const testBtn = document.createElement("button");
+  testBtn.textContent = "Test Talk";
+  testBtn.style.cssText = "position:fixed;bottom:8px;right:8px;z-index:999;padding:8px 14px;background:#ffa500;color:#000;border:none;border-radius:8px;font-family:inherit;font-size:0.8rem;font-weight:600;cursor:pointer;opacity:0.8";
+  testBtn.addEventListener("click", async () => {
+    testBtn.disabled = true;
+    testBtn.textContent = "Generating...";
+    try {
+      // Use Piper TTS to generate a real speech WAV
+      const resp = await fetch(`${API_BASE}/tts-preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: "What is the weather like in Seattle today?" }),
+      });
+      if (!resp.ok) throw new Error("TTS failed");
+      audioBlob = await resp.blob();
+      if (currentMode !== "talk") setMode("talk");
+      setState("sending");
+      setStatus("Thinking...", "sending");
+      primeAudio();
+      startGestureAudio();
+      sendAudio();
+    } catch (e) {
+      setStatus("Test failed: " + e, "error");
+      setTimeout(hideStatus, 3000);
+    }
+    testBtn.disabled = false;
+    testBtn.textContent = "Test Talk";
+  });
+  document.body.appendChild(testBtn);
+}
 
 // Register service worker
 if ("serviceWorker" in navigator) {

@@ -19,13 +19,13 @@ type echoService struct {
 type registry struct {
 	mu        sync.RWMutex
 	services  map[string]*echoService
-	observers map[*websocket.Conn]struct{}
+	observers map[*websocket.Conn]string // value = sessionId
 }
 
 func newRegistry() *registry {
 	return &registry{
 		services:  make(map[string]*echoService),
-		observers: make(map[*websocket.Conn]struct{}),
+		observers: make(map[*websocket.Conn]string),
 	}
 }
 
@@ -75,11 +75,11 @@ func (r *registry) unregister(conn *websocket.Conn) {
 	}
 }
 
-func (r *registry) addObserver(conn *websocket.Conn) {
+func (r *registry) addObserver(conn *websocket.Conn, sessionId string) {
 	r.mu.Lock()
-	r.observers[conn] = struct{}{}
+	r.observers[conn] = sessionId
 	r.mu.Unlock()
-	log.Printf("Observer connected")
+	log.Printf("Observer connected (session=%s)", sessionId)
 
 	// Send current machine list immediately
 	r.sendMachinesTo(conn)
@@ -178,6 +178,27 @@ func (r *registry) broadcastEvent(data map[string]interface{}) {
 	r.mu.RUnlock()
 
 	for _, conn := range observers {
+		conn.WriteMessage(websocket.TextMessage, msg)
+	}
+}
+
+// sendToSession sends a JSON event only to the observer with the matching sessionId.
+func (r *registry) sendToSession(sessionId string, data map[string]interface{}) {
+	msg, err := json.Marshal(data)
+	if err != nil {
+		return
+	}
+
+	r.mu.RLock()
+	var targets []*websocket.Conn
+	for conn, sid := range r.observers {
+		if sid == sessionId {
+			targets = append(targets, conn)
+		}
+	}
+	r.mu.RUnlock()
+
+	for _, conn := range targets {
 		conn.WriteMessage(websocket.TextMessage, msg)
 	}
 }

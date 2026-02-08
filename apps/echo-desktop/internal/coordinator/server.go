@@ -27,6 +27,10 @@ var (
 	coordinatorPort int
 	externalURL     string // e.g. "http://100.x.x.x:53937" for Tailscale
 	ttsVoice        string // configured TTS voice name
+	devURL          string // dev-mode Vite URL (HTTPS via Tailscale)
+
+	interimCache   map[string]string // phrase → base64 WAV
+	interimCacheMu sync.RWMutex
 )
 
 var (
@@ -61,6 +65,16 @@ func GetShortURL() string {
 // GetConnectionCode returns the short connection code.
 func GetConnectionCode() string {
 	return connectionCode
+}
+
+// SetDevURL sets the dev-mode Vite URL (HTTPS via Tailscale Funnel).
+func SetDevURL(url string) {
+	devURL = url
+}
+
+// GetDevURL returns the dev-mode URL if set.
+func GetDevURL() string {
+	return devURL
 }
 
 // SetSTTFunc sets the speech-to-text function used by the /transcribe endpoint.
@@ -109,6 +123,45 @@ func SetAgentFunc(fn func(rawText string, onProgress func(string, string)) (stri
 	funcMu.Lock()
 	defer funcMu.Unlock()
 	agentFunc = fn
+}
+
+// interimPhrases are the fixed phrases spoken while the agent searches.
+var interimPhrases = []string{
+	"Let me look that up.",
+	"Give me a moment.",
+	"Let me search for that.",
+	"One moment while I check.",
+}
+
+// PreCacheInterimPhrases pre-generates TTS audio for the fixed interim phrases
+// so they can be played instantly during talk mode without waiting for synthesis.
+func PreCacheInterimPhrases() {
+	funcMu.RLock()
+	speakFn := ttsFunc
+	funcMu.RUnlock()
+	if speakFn == nil {
+		return
+	}
+
+	voice := ttsVoice
+	if voice == "" {
+		voice = "default"
+	}
+
+	cache := make(map[string]string, len(interimPhrases))
+	for _, phrase := range interimPhrases {
+		audio, err := speakFn(phrase, voice, "English")
+		if err != nil {
+			log.Printf("Failed to pre-cache interim phrase %q: %v", phrase, err)
+			continue
+		}
+		cache[phrase] = base64.StdEncoding.EncodeToString(audio)
+	}
+
+	interimCacheMu.Lock()
+	interimCache = cache
+	interimCacheMu.Unlock()
+	log.Printf("Pre-cached %d interim phrases", len(cache))
 }
 
 var upgrader = websocket.Upgrader{
@@ -267,9 +320,11 @@ func handleTranscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sessionId := r.FormValue("sessionId")
+
 	// Branch on mode
 	if mode == "talk" {
-		handleTalkMode(w, rawText, sttMs)
+		handleTalkMode(w, rawText, sttMs, sessionId)
 		return
 	}
 
@@ -348,7 +403,7 @@ func handleTranscribe(w http.ResponseWriter, r *http.Request) {
 
 // handleTalkMode runs the agent on transcribed text and returns the response with TTS audio.
 // Progress events (searching, interim audio) are pushed via WebSocket to observers.
-func handleTalkMode(w http.ResponseWriter, rawText string, sttMs int64) {
+func handleTalkMode(w http.ResponseWriter, rawText string, sttMs int64, sessionId string) {
 	funcMu.RLock()
 	agentFn := agentFunc
 	speakFn := ttsFunc
@@ -359,11 +414,44 @@ func handleTalkMode(w http.ResponseWriter, rawText string, sttMs int64) {
 		return
 	}
 
+	// Send transcription text to the requesting session only
+	reg.sendToSession(sessionId, map[string]interface{}{
+		"type":  "agent_status",
+		"state": "transcribed",
+		"text":  rawText,
+	})
+
 	// Track whether we've sent an interim spoken response
 	interimSent := false
 
+	// Detailed timing breakdown
+	type timingEntry struct {
+		Label string `json:"label"`
+		Ms    int64  `json:"ms"`
+	}
+	var timings []timingEntry
+	phaseStart := time.Now()
+
 	agentStart := time.Now()
 	agentResponse, err := agentFn(rawText, func(state, detail string) {
+		elapsed := time.Since(phaseStart).Milliseconds()
+		phaseStart = time.Now()
+
+		// Record timing for the phase that just ended
+		if state == "searching" {
+			if len(timings) == 0 {
+				timings = append(timings, timingEntry{"LLM decide", elapsed})
+			} else {
+				timings = append(timings, timingEntry{"LLM respond", elapsed})
+			}
+		} else if state == "thinking" {
+			label := "Tool"
+			if detail != "" {
+				label = detail
+			}
+			timings = append(timings, timingEntry{label, elapsed})
+		}
+
 		event := map[string]interface{}{
 			"type":  "agent_status",
 			"state": state,
@@ -372,27 +460,32 @@ func handleTalkMode(w http.ResponseWriter, rawText string, sttMs int64) {
 			event["detail"] = detail
 		}
 
-		// On first "searching" event, generate and send a spoken interim response
-		if state == "searching" && !interimSent && speakFn != nil {
+		// On first "searching" event, use pre-cached interim audio for instant playback
+		if state == "searching" && !interimSent {
 			interimSent = true
-			phrases := []string{
-				"Let me look that up.",
-				"Give me a moment.",
-				"Let me search for that.",
-				"One moment while I check.",
+			phrase := interimPhrases[len(rawText)%len(interimPhrases)]
+			interimCacheMu.RLock()
+			if b64, ok := interimCache[phrase]; ok {
+				event["ttsAudio"] = b64
+			} else if speakFn != nil {
+				// Fallback: synthesize on the fly if cache miss
+				voice := ttsVoice
+				if voice == "" {
+					voice = "default"
+				}
+				if audio, err := speakFn(phrase, voice, "English"); err == nil {
+					event["ttsAudio"] = base64.StdEncoding.EncodeToString(audio)
+				}
 			}
-			phrase := phrases[len(rawText)%len(phrases)]
-			voice := ttsVoice
-			if voice == "" {
-				voice = "default"
-			}
-			if audio, err := speakFn(phrase, voice, "English"); err == nil {
-				event["ttsAudio"] = base64.StdEncoding.EncodeToString(audio)
-			}
+			interimCacheMu.RUnlock()
 		}
 
-		reg.broadcastEvent(event)
+		reg.sendToSession(sessionId, event)
 	})
+	// Record the final LLM response phase
+	finalElapsed := time.Since(phaseStart).Milliseconds()
+	timings = append(timings, timingEntry{"LLM respond", finalElapsed})
+
 	agentMs := time.Since(agentStart).Milliseconds()
 	if err != nil {
 		log.Printf("Agent error (%dms): %v", agentMs, err)
@@ -403,6 +496,7 @@ func handleTalkMode(w http.ResponseWriter, rawText string, sttMs int64) {
 
 	// TTS the agent response
 	var ttsB64 string
+	var ttsMs int64
 	if speakFn != nil && agentResponse != "" {
 		voice := ttsVoice
 		if voice == "" {
@@ -410,7 +504,7 @@ func handleTalkMode(w http.ResponseWriter, rawText string, sttMs int64) {
 		}
 		ttsStart := time.Now()
 		ttsAudio, err := speakFn(agentResponse, voice, "English")
-		ttsMs := time.Since(ttsStart).Milliseconds()
+		ttsMs = time.Since(ttsStart).Milliseconds()
 		if err != nil {
 			log.Printf("TTS failed (%dms): %v", ttsMs, err)
 		} else {
@@ -418,6 +512,7 @@ func handleTalkMode(w http.ResponseWriter, rawText string, sttMs int64) {
 			log.Printf("TTS: %d bytes (%dms)", len(ttsAudio), ttsMs)
 		}
 	}
+	timings = append(timings, timingEntry{"TTS", ttsMs})
 
 	resp := map[string]interface{}{
 		"success":       true,
@@ -426,6 +521,8 @@ func handleTalkMode(w http.ResponseWriter, rawText string, sttMs int64) {
 		"agentResponse": agentResponse,
 		"sttMs":         sttMs,
 		"agentMs":       agentMs,
+		"ttsMs":         ttsMs,
+		"timings":       timings,
 	}
 	if ttsB64 != "" {
 		resp["ttsAudio"] = ttsB64
@@ -454,8 +551,9 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			}
 
 			var msg struct {
-				Type string `json:"type"`
-				Name string `json:"name"`
+				Type      string `json:"type"`
+				Name      string `json:"name"`
+				SessionId string `json:"sessionId"`
 			}
 			if err := json.Unmarshal(data, &msg); err != nil {
 				log.Printf("Invalid WebSocket message: %v", err)
@@ -470,7 +568,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				})
 				conn.WriteMessage(websocket.TextMessage, resp)
 			} else if msg.Type == "observe" {
-				reg.addObserver(conn)
+				reg.addObserver(conn, msg.SessionId)
 			}
 		}
 	}()
@@ -546,6 +644,21 @@ func handleConnect(w http.ResponseWriter, r *http.Request) {
     </div>`, connectionCode)
 	}
 
+	// Dev mode QR code section
+	devSection := ""
+	if devURL != "" {
+		devPng, err := qrcode.Encode(devURL, qrcode.Medium, 320)
+		if err == nil {
+			devB64 := base64.StdEncoding.EncodeToString(devPng)
+			devSection = fmt.Sprintf(`<div class="dev-section">
+      <h2>Dev Mode</h2>
+      <p class="label">Vite dev server with live reload</p>
+      <img src="data:image/png;base64,%s" width="200" height="200" alt="Dev QR Code">
+      <div class="url">%s</div>
+    </div>`, devB64, devURL)
+		}
+	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Connect to Voice Relay</title>
@@ -559,6 +672,8 @@ func handleConnect(w http.ResponseWriter, r *http.Request) {
   .code-section { margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid rgba(255,255,255,0.1); }
   .label { color: #888; font-size: 0.9rem; margin-bottom: 0.75rem; }
   .code { font-family: monospace; font-size: 2rem; color: #00d4ff; font-weight: 700; letter-spacing: 0.15em; padding: 14px 28px; background: rgba(0,212,255,0.1); border: 1px solid rgba(0,212,255,0.2); border-radius: 12px; }
+  .dev-section { margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid rgba(255,165,0,0.3); }
+  .dev-section h2 { font-size: 1.1rem; color: #ffa500; margin-bottom: 0.5rem; }
   .setup-hint { margin-top: 2rem; padding: 1rem; background: rgba(255,255,255,0.05); border-radius: 10px; color: #888; font-size: 0.85rem; line-height: 1.5; }
   .setup-hint strong { color: #ccc; }
 </style></head>
@@ -568,11 +683,12 @@ func handleConnect(w http.ResponseWriter, r *http.Request) {
   <img src="data:image/png;base64,%s" width="280" height="280" alt="QR Code">
   <div class="url">%s</div>
   %s
+  %s
   <div class="setup-hint">
     <strong>Connecting another computer?</strong><br>
     Install Voice Relay, then enter the connection code when prompted during setup.
   </div>
-</div></body></html>`, b64, url, codeSection)
+</div></body></html>`, b64, url, codeSection, devSection)
 }
 
 // buildTTSResponse creates a natural-sounding spoken confirmation.

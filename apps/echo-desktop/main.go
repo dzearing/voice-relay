@@ -38,10 +38,13 @@ var (
 	ttsEngine  *tts.Engine
 )
 
+var devMode bool
+
 func main() {
 	// --force: kill any existing VoiceRelay instances before starting
 	for _, arg := range os.Args[1:] {
 		if arg == "--force" {
+			devMode = true
 			killExisting()
 			break
 		}
@@ -144,6 +147,15 @@ func onReady() {
 				}
 
 				log.Printf("Coordinator accessible at: %s", funnelURL)
+
+				// In dev mode, also funnel the Vite dev server port
+				if devMode {
+					devFunnelURL := setup.EnsureDevFunnel(5001, funnelURL)
+					if devFunnelURL != "" {
+						coordinator.SetDevURL(devFunnelURL)
+						log.Printf("Dev PWA accessible at: %s", devFunnelURL)
+					}
+				}
 			}
 		} else {
 			log.Printf("Tailscale not available, coordinator only accessible on localhost")
@@ -159,6 +171,7 @@ func onReady() {
 	tray.SetupMenu(cfg, tray.Callbacks{
 		OnReconnect: handleReconnect,
 		OnQuit:      func() { echoClient.Close() },
+		DevMode:     devMode,
 	})
 
 	// Check for updates in background
@@ -307,7 +320,7 @@ func initCoordinator() {
 		} else {
 			voiceName := cfg.TTSVoice
 			if voiceName == "" || voiceName == "default" {
-				voiceName = "en_US-lessac-medium"
+				voiceName = "en_US-lessac-high"
 			}
 			modelPath, err := tts.EnsureVoice(modelsDir, voiceName)
 			if err != nil {
@@ -327,6 +340,8 @@ func initCoordinator() {
 					cfg.TTSVoice = newVoice
 					cfg.Save()
 					log.Printf("TTS voice changed to: %s", newVoice)
+					// Re-cache interim phrases with the new voice
+					go coordinator.PreCacheInterimPhrases()
 					return nil
 				})
 				coordinator.SetTTSPreviewFunc(func(text, voice string) ([]byte, error) {
@@ -337,6 +352,8 @@ func initCoordinator() {
 					return tts.NewEngine(piperPath, mp).Synthesize(text)
 				})
 				log.Printf("TTS engine ready (Piper)")
+				// Pre-cache interim phrases for instant playback in talk mode
+				go coordinator.PreCacheInterimPhrases()
 			}
 		}
 	}

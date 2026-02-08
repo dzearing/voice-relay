@@ -22,7 +22,7 @@ const (
 	// Voice model URLs (HuggingFace)
 	defaultVoiceBaseURL = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0"
 	defaultVoicePath    = "en/en_US/lessac/medium"
-	defaultVoiceName    = "en_US-lessac-medium"
+	defaultVoiceName    = "en_US-lessac-high"
 )
 
 // BinaryName returns the platform-specific piper binary name.
@@ -137,11 +137,11 @@ func EnsureVoice(modelsDir, voiceName string) (string, error) {
 	return modelPath, nil
 }
 
-// voiceToPath converts a voice name like "en_US-lessac-medium" to
+// voiceToPath converts a voice name like "en_US-lessac-high" to
 // the HuggingFace path "en/en_US/lessac/medium".
 func voiceToPath(voiceName string) string {
 	// Format: {lang}_{REGION}-{name}-{quality}
-	// e.g. en_US-lessac-medium -> en/en_US/lessac/medium
+	// e.g. en_US-lessac-high -> en/en_US/lessac/medium
 	parts := strings.SplitN(voiceName, "-", 3)
 	if len(parts) != 3 {
 		return defaultVoicePath

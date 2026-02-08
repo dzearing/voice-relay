@@ -109,6 +109,28 @@ func EnsureFunnel(port int) (string, error) {
 	return url, nil
 }
 
+// EnsureDevFunnel starts a Tailscale Funnel for the Vite dev server port.
+// Returns the HTTPS URL (e.g. "https://machine.ts.net:5001") or empty on failure.
+func EnsureDevFunnel(devPort int, baseURL string) string {
+	if baseURL == "" {
+		return ""
+	}
+
+	log.Printf("Starting Tailscale Funnel for dev port %d...", devPort)
+	cmd := exec.Command("tailscale", "funnel", "--bg", fmt.Sprintf("%d", devPort))
+	hideWindow(cmd)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		log.Printf("Failed to start dev funnel: %v: %s", err, string(out))
+		return ""
+	}
+
+	// Construct dev URL: take the base hostname and add the dev port
+	// baseURL is like "https://machine.tail1234.ts.net"
+	devURL := fmt.Sprintf("%s:%d", baseURL, devPort)
+	log.Printf("Dev funnel started: %s", devURL)
+	return devURL
+}
+
 // ShortenURL creates a short URL via is.gd.
 func ShortenURL(longURL string) string {
 	apiURL := fmt.Sprintf("https://is.gd/create.php?format=simple&url=%s", longURL)

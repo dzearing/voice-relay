@@ -19,6 +19,7 @@ import (
 type Callbacks struct {
 	OnReconnect func()
 	OnQuit      func()
+	DevMode     bool
 }
 
 var (
@@ -42,6 +43,7 @@ func SetupMenu(cfg *config.Config, cb Callbacks) {
 
 	// Connection info and QR code
 	var mQR *systray.MenuItem
+	var mDevQR *systray.MenuItem
 	if cfg.RunAsCoordinator {
 		systray.AddSeparator()
 		mCoord := systray.AddMenuItem(fmt.Sprintf("Coordinator: Running on :%d", cfg.Port), "Coordinator status")
@@ -65,6 +67,11 @@ func SetupMenu(cfg *config.Config, cb Callbacks) {
 			}
 			mURL.SetTitle("localhost only")
 		}()
+
+		// Dev mode QR code (only shown when dev funnel is active)
+		if cb.DevMode {
+			mDevQR = systray.AddMenuItem("Show Dev QR Code", "Open QR code for Vite dev server")
+		}
 	} else {
 		// Client mode — show QR code option to open coordinator's connect page
 		systray.AddSeparator()
@@ -92,10 +99,14 @@ func SetupMenu(cfg *config.Config, cb Callbacks) {
 	mQuit := systray.AddMenuItem("Quit", "Quit Voice Relay")
 
 	go func() {
-		// Create a nil channel for QR if not set (select on nil channel blocks forever)
+		// Create nil channels for optional items (select on nil channel blocks forever)
 		var qrCh <-chan struct{}
 		if mQR != nil {
 			qrCh = mQR.ClickedCh
+		}
+		var devQrCh <-chan struct{}
+		if mDevQR != nil {
+			devQrCh = mDevQR.ClickedCh
 		}
 
 		for {
@@ -109,6 +120,9 @@ func SetupMenu(cfg *config.Config, cb Callbacks) {
 					qrURL = wsToHTTP(cfg.CoordinatorURL) + "/connect"
 				}
 				keyboard.OpenURL(qrURL)
+			case <-devQrCh:
+				// Open the connect page which now shows both QR codes
+				keyboard.OpenURL(fmt.Sprintf("http://localhost:%d/connect", cfg.Port))
 			case <-mConnect.ClickedCh:
 				if cb.OnReconnect != nil {
 					cb.OnReconnect()
