@@ -93,7 +93,7 @@ func EnsureFunnel(port int) (string, error) {
 
 	// Start funnel in background mode
 	log.Printf("Starting Tailscale Funnel on port %d...", port)
-	cmd := exec.Command("tailscale", "funnel", "--bg", fmt.Sprintf("%d", port))
+	cmd := exec.Command("tailscale", "funnel", "--bg", "--https", "443", fmt.Sprintf("http://127.0.0.1:%d", port))
 	hideWindow(cmd)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("failed to start funnel: %w: %s", err, string(out))
@@ -117,7 +117,7 @@ func EnsureDevFunnel(devPort int, baseURL string) string {
 	}
 
 	log.Printf("Starting Tailscale Funnel for dev port %d...", devPort)
-	cmd := exec.Command("tailscale", "funnel", "--bg", fmt.Sprintf("%d", devPort))
+	cmd := exec.Command("tailscale", "funnel", "--bg", "--https", fmt.Sprintf("%d", devPort), fmt.Sprintf("http://127.0.0.1:%d", devPort))
 	hideWindow(cmd)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		log.Printf("Failed to start dev funnel: %v: %s", err, string(out))
