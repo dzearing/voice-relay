@@ -16,19 +16,48 @@ const settingsBtn = document.getElementById("settings-btn") as HTMLButtonElement
 const settingsOverlay = document.getElementById("settings-overlay") as HTMLDivElement;
 const closeSettingsBtn = document.getElementById("close-settings-btn") as HTMLButtonElement;
 const voiceListEl = document.getElementById("voice-list") as HTMLDivElement;
+const resultHeaderPrimary = document.getElementById("result-header-primary") as HTMLDivElement;
+const resultHeaderSecondary = document.getElementById("result-header-secondary") as HTMLDivElement;
+
+// Action card elements
+const actionCard = document.getElementById("action-card") as HTMLDivElement;
+const actionSummary = document.getElementById("action-summary") as HTMLDivElement;
+const actionSummaryText = document.getElementById("action-summary-text") as HTMLSpanElement;
+const actionExpanded = document.getElementById("action-expanded") as HTMLDivElement;
+const modeRelayBtn = document.getElementById("mode-relay-btn") as HTMLButtonElement;
+const modeTalkBtn = document.getElementById("mode-talk-btn") as HTMLButtonElement;
+const machinePicker = document.getElementById("machine-picker") as HTMLDivElement;
 
 // State
 type AppState = "idle" | "recording" | "sending";
+type AppMode = "relay" | "talk";
 let currentState: AppState = "idle";
-let audioContext: AudioContext | null = null;
+let currentMode: AppMode = (localStorage.getItem("voicerelay_mode") as AppMode) || "relay";
 let mediaStream: MediaStream | null = null;
-let audioWorkletNode: ScriptProcessorNode | null = null;
+let recorderNode: ScriptProcessorNode | null = null;
 let recordedSamples: Float32Array[] = [];
 let audioBlob: Blob | null = null;
 let recordingStartTime: number = 0;
 let recordingTimer: ReturnType<typeof setInterval> | null = null;
 
-const SAMPLE_RATE = 16000;
+// Single shared AudioContext for recording AND playback.
+// iOS Safari only allows one active AudioContext — using two kills the first.
+let sharedCtx: AudioContext | null = null;
+
+function ensureAudioContext(): AudioContext {
+  if (!sharedCtx || sharedCtx.state === "closed") {
+    sharedCtx = new AudioContext();
+  }
+  if (sharedCtx.state === "suspended") {
+    sharedCtx.resume();
+  }
+  return sharedCtx;
+}
+
+// Called during user gesture to unlock audio on iOS
+function primeAudio() {
+  ensureAudioContext();
+}
 
 // Get API base URL
 const API_BASE = window.location.origin;
@@ -81,6 +110,47 @@ function showResultsButton(rawText: string, cleanedText: string, sttMs?: number,
   timingInfoEl.textContent = parts.join(" \u00B7 ");
 }
 
+function showTalkResults(rawText: string, agentResponse: string, sttMs?: number, agentMs?: number, totalMs?: number) {
+  lastRawText = rawText;
+  lastCleanedText = agentResponse;
+
+  // Update headers for talk mode
+  resultHeaderPrimary.textContent = "Response";
+  resultHeaderPrimary.className = "result-header sent";
+  resultHeaderSecondary.textContent = "You said";
+  resultHeaderSecondary.className = "result-header raw";
+
+  cleanedTextEl.textContent = agentResponse;
+  rawTextEl.textContent = rawText;
+
+  // Hide resend buttons in talk mode
+  resendCleanedBtn.style.display = "none";
+  resendRawBtn.style.display = "none";
+
+  viewResultsBtn.classList.add("visible");
+
+  // Build timing string
+  const parts: string[] = [];
+  if (sttMs != null && sttMs > 0) parts.push(`STT ${formatMs(sttMs)}`);
+  if (agentMs != null && agentMs > 0) parts.push(`Agent ${formatMs(agentMs)}`);
+  if (totalMs != null && totalMs > 0) parts.push(`Total ${formatMs(totalMs)}`);
+  timingInfoEl.textContent = parts.join(" \u00B7 ");
+}
+
+function showRelayResults(rawText: string, cleanedText: string, sttMs?: number, llmMs?: number, totalMs?: number) {
+  // Restore headers for relay mode
+  resultHeaderPrimary.textContent = "Sent (Cleaned)";
+  resultHeaderPrimary.className = "result-header sent";
+  resultHeaderSecondary.textContent = "Raw";
+  resultHeaderSecondary.className = "result-header raw";
+
+  // Show resend buttons in relay mode
+  resendCleanedBtn.style.display = "";
+  resendRawBtn.style.display = "";
+
+  showResultsButton(rawText, cleanedText, sttMs, llmMs, totalMs);
+}
+
 function hideResultsButton() {
   viewResultsBtn.classList.remove("visible");
 }
@@ -119,10 +189,49 @@ function loadTarget(): string {
   return localStorage.getItem(STORAGE_KEY) || "";
 }
 
+// --- Mode & Action Card ---
+
+function setMode(mode: AppMode) {
+  currentMode = mode;
+  localStorage.setItem("voicerelay_mode", mode);
+
+  // Update mode buttons
+  modeRelayBtn.classList.toggle("active", mode === "relay");
+  modeTalkBtn.classList.toggle("active", mode === "talk");
+
+  // Show/hide machine picker
+  machinePicker.classList.toggle("hidden", mode === "talk");
+
+  // Update summary text
+  updateActionSummary();
+
+  // Collapse card after selection
+  actionCard.classList.remove("expanded");
+}
+
+function updateActionSummary() {
+  if (currentMode === "talk") {
+    actionSummaryText.textContent = "Talking with Agent";
+  } else {
+    const target = machineSelect.value || machineSelect.options[0]?.text || "...";
+    actionSummaryText.textContent = `Relaying to ${target}`;
+  }
+}
+
+function toggleActionCard() {
+  actionCard.classList.toggle("expanded");
+}
+
+// Action card events
+actionSummary.addEventListener("click", toggleActionCard);
+modeRelayBtn.addEventListener("click", () => setMode("relay"));
+modeTalkBtn.addEventListener("click", () => setMode("talk"));
+
 // Update machine select from a list of machines
 function updateMachineList(machines: { name: string }[]) {
   if (machines.length === 0) {
     machineSelect.innerHTML = '<option value="">No devices connected</option>';
+    updateActionSummary();
     return;
   }
 
@@ -130,11 +239,19 @@ function updateMachineList(machines: { name: string }[]) {
     .map((m) => `<option value="${m.name}">${m.name}</option>`)
     .join("");
 
-  // Restore saved selection
-  const saved = loadTarget();
-  if (saved && Array.from(machineSelect.options).some(o => o.value === saved)) {
-    machineSelect.value = saved;
+  // Auto-select if only 1 machine
+  if (machines.length === 1) {
+    machineSelect.value = machines[0].name;
+    saveTarget(machines[0].name);
+  } else {
+    // Restore saved selection
+    const saved = loadTarget();
+    if (saved && Array.from(machineSelect.options).some(o => o.value === saved)) {
+      machineSelect.value = saved;
+    }
   }
+
+  updateActionSummary();
 }
 
 // WebSocket observer for live machine list updates
@@ -155,6 +272,8 @@ function connectObserver() {
       const msg = JSON.parse(event.data);
       if (msg.type === "machines") {
         updateMachineList(msg.machines || []);
+      } else if (msg.type === "agent_status") {
+        handleAgentStatus(msg);
       }
     } catch {}
   };
@@ -170,7 +289,10 @@ function connectObserver() {
 }
 
 // Save selection when changed
-machineSelect.addEventListener("change", () => saveTarget(machineSelect.value));
+machineSelect.addEventListener("change", () => {
+  saveTarget(machineSelect.value);
+  updateActionSummary();
+});
 
 // Check if recorded samples contain actual audio (not just silence)
 function hasAudio(samples: Float32Array[]): boolean {
@@ -236,29 +358,29 @@ function createWavBlob(samples: Float32Array[], sampleRate: number): Blob {
   return new Blob([wavHeader, pcm.buffer], { type: "audio/wav" });
 }
 
-// Start recording
+// Start recording using the shared AudioContext
 async function startRecording() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { sampleRate: SAMPLE_RATE, channelCount: 1, echoCancellation: true },
+      audio: { channelCount: 1, echoCancellation: true },
     });
 
     mediaStream = stream;
-    audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
-    const source = audioContext.createMediaStreamSource(stream);
+    const ctx = ensureAudioContext();
+    const source = ctx.createMediaStreamSource(stream);
 
     // Use ScriptProcessorNode (widely supported) to capture raw PCM
     const bufferSize = 4096;
-    audioWorkletNode = audioContext.createScriptProcessor(bufferSize, 1, 1);
+    recorderNode = ctx.createScriptProcessor(bufferSize, 1, 1);
     recordedSamples = [];
 
-    audioWorkletNode.onaudioprocess = (e) => {
+    recorderNode.onaudioprocess = (e) => {
       const input = e.inputBuffer.getChannelData(0);
       recordedSamples.push(new Float32Array(input));
     };
 
-    source.connect(audioWorkletNode);
-    audioWorkletNode.connect(audioContext.destination);
+    source.connect(recorderNode);
+    recorderNode.connect(ctx.destination);
 
     recordingStartTime = Date.now();
     recordingTimer = setInterval(updateRecordingTime, 100);
@@ -272,23 +394,20 @@ async function startRecording() {
   }
 }
 
-// Stop recording and create WAV blob
+// Stop recording and create WAV blob (does NOT close the shared context)
 function stopRecording() {
-  if (audioWorkletNode) {
-    audioWorkletNode.disconnect();
-    audioWorkletNode = null;
+  if (recorderNode) {
+    recorderNode.disconnect();
+    recorderNode = null;
   }
-  if (audioContext) {
-    const rate = audioContext.sampleRate;
-    audioContext.close();
-    audioContext = null;
-    if (hasAudio(recordedSamples)) {
-      audioBlob = createWavBlob(recordedSamples, rate);
-    } else {
-      audioBlob = null;
-    }
-    recordedSamples = [];
+  // Use the shared context's sample rate for the WAV
+  const rate = sharedCtx?.sampleRate || 48000;
+  if (hasAudio(recordedSamples)) {
+    audioBlob = createWavBlob(recordedSamples, rate);
+  } else {
+    audioBlob = null;
   }
+  recordedSamples = [];
   if (mediaStream) {
     mediaStream.getTracks().forEach((track) => track.stop());
     mediaStream = null;
@@ -299,9 +418,67 @@ function stopRecording() {
   }
 }
 
+// Generate a tiny silent WAV to prime iOS audio session after recording
+function generateSilenceWav(): Blob {
+  const rate = 22050;
+  const samples = 2205; // 0.1s of silence
+  const buf = new ArrayBuffer(44 + samples * 2);
+  const v = new DataView(buf);
+  v.setUint32(0, 0x52494646, false); v.setUint32(4, 36 + samples * 2, true);
+  v.setUint32(8, 0x57415645, false); v.setUint32(12, 0x666d7420, false);
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  v.setUint32(36, 0x64617461, false); v.setUint32(40, samples * 2, true);
+  // All zeros = silence
+  return new Blob([buf], { type: "audio/wav" });
+}
+
+const silenceBlob = generateSilenceWav();
+
+// A single reusable Audio element, unlocked during the user gesture.
+// iOS Safari only allows Audio elements started in a gesture to play.
+// By reusing this element (swapping src), we avoid creating new elements later.
+let gestureAudio: HTMLAudioElement | null = null;
+let gestureAudioUrl: string | null = null;
+
+function startGestureAudio() {
+  stopGestureAudio();
+  gestureAudioUrl = URL.createObjectURL(silenceBlob);
+  gestureAudio = new Audio(gestureAudioUrl);
+  gestureAudio.loop = true;
+  gestureAudio.play().catch(() => {});
+}
+
+function playOnGestureAudio(blob: Blob) {
+  if (!gestureAudio) return;
+  // Clean up old URL
+  if (gestureAudioUrl) {
+    URL.revokeObjectURL(gestureAudioUrl);
+  }
+  gestureAudio.loop = false;
+  gestureAudioUrl = URL.createObjectURL(blob);
+  gestureAudio.src = gestureAudioUrl;
+  gestureAudio.play().catch(() => {});
+}
+
+function stopGestureAudio() {
+  if (gestureAudio) {
+    gestureAudio.pause();
+    gestureAudio.removeAttribute("src");
+    gestureAudio.load();
+    gestureAudio = null;
+  }
+  if (gestureAudioUrl) {
+    URL.revokeObjectURL(gestureAudioUrl);
+    gestureAudioUrl = null;
+  }
+}
+
 // Stop recording and send
 async function stopAndSend() {
   stopRecording();
+  startGestureAudio(); // unlock Audio element during gesture for later playback
   await sendAudio();
 }
 
@@ -313,11 +490,113 @@ function cancelRecording() {
   hideStatus();
 }
 
+// Play base64-encoded WAV audio.
+// If a gesture-unlocked Audio element exists, reuse it (required on iOS Safari
+// where new Audio elements can't play outside user gestures).
+// Otherwise fall back to creating a new Audio element (works on desktop/non-iOS).
+function playBase64Audio(b64: string) {
+  const binaryString = atob(b64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  const blob = new Blob([bytes], { type: "audio/wav" });
+
+  if (gestureAudio) {
+    playOnGestureAudio(blob);
+  } else {
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.onended = () => URL.revokeObjectURL(url);
+    audio.onerror = () => URL.revokeObjectURL(url);
+    audio.play().catch(() => {});
+  }
+}
+
+// --- Chime for tool execution ---
+let chimeInterval: ReturnType<typeof setInterval> | null = null;
+
+// Generate a tiny WAV with a two-tone chime (played via Audio element)
+function generateChimeWav(): Blob {
+  const rate = 22050;
+  const duration = 0.4;
+  const samples = Math.floor(rate * duration);
+  const buffer = new ArrayBuffer(44 + samples * 2);
+  const view = new DataView(buffer);
+  // WAV header
+  view.setUint32(0, 0x52494646, false);
+  view.setUint32(4, 36 + samples * 2, true);
+  view.setUint32(8, 0x57415645, false);
+  view.setUint32(12, 0x666d7420, false);
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, rate, true);
+  view.setUint32(28, rate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  view.setUint32(36, 0x64617461, false);
+  view.setUint32(40, samples * 2, true);
+  for (let i = 0; i < samples; i++) {
+    const t = i / rate;
+    const envelope = Math.exp(-t * 8); // fast decay
+    const val = (Math.sin(2 * Math.PI * 523 * t) + Math.sin(2 * Math.PI * 659 * t)) * 0.08 * envelope;
+    view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, val)) * 32767, true);
+  }
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+// Pre-generate chime blob so we don't rebuild it every time
+const chimeBlob = generateChimeWav();
+
+// Play chime and interim audio through the gesture-unlocked Audio element.
+// On iOS Safari, only the gesture-unlocked element can play; creating new
+// Audio elements outside gestures fails silently.
+function playChime() {
+  if (!gestureAudio) return;
+  playOnGestureAudio(chimeBlob);
+}
+
+function startChime() {
+  playChime();
+  chimeInterval = setInterval(playChime, 2500);
+}
+
+function stopChime() {
+  if (chimeInterval) {
+    clearInterval(chimeInterval);
+    chimeInterval = null;
+  }
+}
+
+// --- Agent status via WebSocket ---
+let agentChiming = false;
+
+function handleAgentStatus(msg: Record<string, unknown>) {
+  if (msg.state === "searching") {
+    setStatus("Searching...", "sending");
+    // Play interim spoken response if included
+    if (msg.ttsAudio) {
+      playBase64Audio(msg.ttsAudio as string);
+    }
+    // Start chime after a delay so interim audio plays first
+    if (!agentChiming) {
+      agentChiming = true;
+      setTimeout(() => {
+        if (agentChiming) startChime();
+      }, 1800);
+    }
+  } else if (msg.state === "thinking") {
+    setStatus("Thinking...", "sending");
+  }
+}
+
 // Send audio to server
 async function sendAudio() {
   const target = machineSelect.value;
 
-  if (!target) {
+  // In relay mode, require a target
+  if (currentMode === "relay" && !target) {
     setStatus("Select a device first", "error");
     setState("idle");
     setTimeout(hideStatus, 2000);
@@ -326,6 +605,7 @@ async function sendAudio() {
 
   if (!audioBlob || audioBlob.size < 1000) {
     // No audio or too short (< ~30ms) — silently return to idle
+    stopGestureAudio();
     audioBlob = null;
     setState("idle");
     hideStatus();
@@ -334,11 +614,14 @@ async function sendAudio() {
 
   try {
     setState("sending");
-    setStatus("Sending...", "sending");
+    setStatus(currentMode === "talk" ? "Thinking..." : "Sending...", "sending");
 
     const formData = new FormData();
     formData.append("audio", audioBlob, "recording.wav");
-    formData.append("target", target);
+    formData.append("mode", currentMode);
+    if (currentMode === "relay") {
+      formData.append("target", target);
+    }
 
     const fetchStart = Date.now();
     const response = await fetch(`${API_BASE}/transcribe`, {
@@ -349,45 +632,54 @@ async function sendAudio() {
     const result = await response.json();
     const totalMs = Date.now() - fetchStart;
 
+    // Stop chime if it was playing (talk mode with tool calls)
+    if (agentChiming) {
+      agentChiming = false;
+      stopChime();
+    }
+
     if (response.ok && result.noSpeech) {
-      // No speech detected — silently return to idle
+      stopGestureAudio();
       audioBlob = null;
       setState("idle");
       hideStatus();
+    } else if (response.ok && result.mode === "talk") {
+      setStatus("Done!", "success");
+      setTimeout(hideStatus, 2000);
+      showTalkResults(result.rawText, result.agentResponse, result.sttMs, result.agentMs, totalMs);
+      if (result.ttsAudio) {
+        // playBase64Audio reuses the gesture-unlocked Audio element
+        playBase64Audio(result.ttsAudio);
+      } else {
+        stopGestureAudio();
+      }
+      audioBlob = null;
+      setState("idle");
     } else if (response.ok) {
       setStatus("Sent!", "success");
       setTimeout(hideStatus, 2000);
-      showResultsButton(result.rawText, result.cleanedText, result.sttMs, result.llmMs, totalMs);
-      // Play TTS audio feedback if included
+      showRelayResults(result.rawText, result.cleanedText, result.sttMs, result.llmMs, totalMs);
       if (result.ttsAudio) {
         playBase64Audio(result.ttsAudio);
+      } else {
+        stopGestureAudio();
       }
       audioBlob = null;
       setState("idle");
     } else {
+      stopGestureAudio();
       setStatus(result.error || "Failed to send", "error");
       setState("idle");
       setTimeout(hideStatus, 3000);
     }
   } catch (error) {
+    stopGestureAudio();
+    agentChiming = false;
+    stopChime();
     setStatus("Network error", "error");
     setState("idle");
     setTimeout(hideStatus, 3000);
   }
-}
-
-// Play base64-encoded WAV audio
-function playBase64Audio(b64: string) {
-  const binaryString = atob(b64);
-  const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  const blob = new Blob([bytes], { type: "audio/wav" });
-  const url = URL.createObjectURL(blob);
-  const audio = new Audio(url);
-  audio.play().catch(() => {});
-  audio.onended = () => URL.revokeObjectURL(url);
 }
 
 // Press-and-hold interaction:
@@ -402,6 +694,7 @@ function handlePressDown(e: Event) {
   if (currentState === "idle") {
     pressStartTime = Date.now();
     isHolding = true;
+    primeAudio(); // unlock audio playback on mobile during user gesture
     startRecording();
   } else if (currentState === "recording" && !isHolding) {
     // Toggle mode: second tap stops and sends
@@ -609,5 +902,6 @@ document.getElementById("version-chip")!.textContent = __APP_VERSION__;
 
 // Initial load — observer WebSocket pushes machine list, HTTP fetch as fallback
 connectObserver();
+setMode(currentMode); // apply persisted mode
 setState("idle");
 hideStatus();

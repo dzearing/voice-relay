@@ -72,6 +72,7 @@ func (e *Engine) start() error {
 		"--host", "127.0.0.1",
 		"--ctx-size", "4096",
 		"--cache-ram", "0",
+		"--jinja",
 	}
 
 	e.cmd = exec.Command(e.serverPath, args...)

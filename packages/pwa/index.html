@@ -39,13 +39,35 @@
         </button>
       </header>
 
-      <div class="target-container">
-        <div class="target-glass">
-          <label for="machine">Sending to</label>
-          <div class="select-wrapper">
-            <select id="machine">
-              <option value="">Select device...</option>
-            </select>
+      <div class="action-card" id="action-card">
+        <div class="action-summary" id="action-summary">
+          <span class="action-summary-text" id="action-summary-text">Relaying to ...</span>
+          <svg class="action-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m6 9 6 6 6-6"/>
+          </svg>
+        </div>
+        <div class="action-expanded" id="action-expanded">
+          <div class="mode-picker">
+            <button class="mode-btn active" id="mode-relay-btn" data-mode="relay">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m22 2-7 20-4-9-9-4 20-7Z"/>
+                <path d="M22 2 11 13"/>
+              </svg>
+              Relay
+            </button>
+            <button class="mode-btn" id="mode-talk-btn" data-mode="talk">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              </svg>
+              Talk
+            </button>
+          </div>
+          <div class="machine-picker" id="machine-picker">
+            <div class="select-wrapper">
+              <select id="machine">
+                <option value="">Select device...</option>
+              </select>
+            </div>
           </div>
         </div>
       </div>
@@ -114,12 +136,12 @@
         <div id="timing-info" class="timing-info"></div>
         <div class="overlay-body">
           <div class="result-column">
-            <div class="result-header sent">Sent (Cleaned)</div>
+            <div class="result-header sent" id="result-header-primary">Sent (Cleaned)</div>
             <div id="cleaned-text" class="result-content"></div>
             <button id="resend-cleaned-btn" class="resend-btn">Resend</button>
           </div>
           <div class="result-column">
-            <div class="result-header raw">Raw</div>
+            <div class="result-header raw" id="result-header-secondary">Raw</div>
             <div id="raw-text" class="result-content"></div>
             <button id="resend-raw-btn" class="resend-btn">Send Raw</button>
           </div>

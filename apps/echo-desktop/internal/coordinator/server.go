@@ -22,6 +22,7 @@ var (
 	ttsFunc         func(text, voice, language string) ([]byte, error)
 	ttsChangeFunc   func(voiceName string) error              // callback to switch voice at runtime
 	ttsPreviewFunc  func(text, voiceName string) ([]byte, error) // preview any voice without changing selection
+	agentFunc       func(rawText string, onProgress func(string, string)) (string, error) // talk mode agent function
 	funcMu          sync.RWMutex
 	coordinatorPort int
 	externalURL     string // e.g. "http://100.x.x.x:53937" for Tailscale
@@ -101,6 +102,13 @@ func SetTTSPreviewFunc(fn func(text, voiceName string) ([]byte, error)) {
 	funcMu.Lock()
 	defer funcMu.Unlock()
 	ttsPreviewFunc = fn
+}
+
+// SetAgentFunc sets the talk-mode agent function.
+func SetAgentFunc(fn func(rawText string, onProgress func(string, string)) (string, error)) {
+	funcMu.Lock()
+	defer funcMu.Unlock()
+	agentFunc = fn
 }
 
 var upgrader = websocket.Upgrader{
@@ -200,8 +208,14 @@ func handleTranscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	mode := r.FormValue("mode")
+	if mode == "" {
+		mode = "relay"
+	}
+
+	// In relay mode, target is required
 	target := r.FormValue("target")
-	if target == "" {
+	if mode == "relay" && target == "" {
 		writeJSONError(w, "No target machine specified", http.StatusBadRequest)
 		return
 	}
@@ -219,12 +233,11 @@ func handleTranscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("Received audio: %s, size: %d, target: %s", header.Filename, len(audioData), target)
+	log.Printf("Received audio: %s, size: %d, mode: %s, target: %s", header.Filename, len(audioData), mode, target)
 
 	// 1. Transcribe audio
 	funcMu.RLock()
 	transcribeFn := sttFunc
-	cleanupFn := llmFunc
 	funcMu.RUnlock()
 
 	if transcribeFn == nil {
@@ -241,19 +254,29 @@ func handleTranscribe(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("Raw transcription (%dms): %s", sttMs, rawText)
 
-	// If whisper detected no speech, return early without sending
+	// If whisper detected no speech, return early
 	if isBlankTranscription(rawText) {
 		log.Printf("No speech detected, not sending")
 		writeJSON(w, map[string]interface{}{
-			"success":     false,
-			"rawText":     rawText,
-			"cleanedText": "",
-			"noSpeech":    true,
-			"sttMs":       sttMs,
-			"llmMs":       int64(0),
+			"success":  false,
+			"rawText":  rawText,
+			"noSpeech": true,
+			"sttMs":    sttMs,
+			"mode":     mode,
 		})
 		return
 	}
+
+	// Branch on mode
+	if mode == "talk" {
+		handleTalkMode(w, rawText, sttMs)
+		return
+	}
+
+	// --- Relay mode (existing behavior) ---
+	funcMu.RLock()
+	cleanupFn := llmFunc
+	funcMu.RUnlock()
 
 	// 2. Clean up text with LLM
 	cleanedText := rawText
@@ -310,11 +333,99 @@ func handleTranscribe(w http.ResponseWriter, r *http.Request) {
 
 	resp := map[string]interface{}{
 		"success":     true,
+		"mode":        "relay",
 		"rawText":     rawText,
 		"cleanedText": cleanedText,
 		"target":      target,
 		"sttMs":       sttMs,
 		"llmMs":       llmMs,
+	}
+	if ttsB64 != "" {
+		resp["ttsAudio"] = ttsB64
+	}
+	writeJSON(w, resp)
+}
+
+// handleTalkMode runs the agent on transcribed text and returns the response with TTS audio.
+// Progress events (searching, interim audio) are pushed via WebSocket to observers.
+func handleTalkMode(w http.ResponseWriter, rawText string, sttMs int64) {
+	funcMu.RLock()
+	agentFn := agentFunc
+	speakFn := ttsFunc
+	funcMu.RUnlock()
+
+	if agentFn == nil {
+		writeJSONError(w, "Talk mode not available (agent not initialized)", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Track whether we've sent an interim spoken response
+	interimSent := false
+
+	agentStart := time.Now()
+	agentResponse, err := agentFn(rawText, func(state, detail string) {
+		event := map[string]interface{}{
+			"type":  "agent_status",
+			"state": state,
+		}
+		if detail != "" {
+			event["detail"] = detail
+		}
+
+		// On first "searching" event, generate and send a spoken interim response
+		if state == "searching" && !interimSent && speakFn != nil {
+			interimSent = true
+			phrases := []string{
+				"Let me look that up.",
+				"Give me a moment.",
+				"Let me search for that.",
+				"One moment while I check.",
+			}
+			phrase := phrases[len(rawText)%len(phrases)]
+			voice := ttsVoice
+			if voice == "" {
+				voice = "default"
+			}
+			if audio, err := speakFn(phrase, voice, "English"); err == nil {
+				event["ttsAudio"] = base64.StdEncoding.EncodeToString(audio)
+			}
+		}
+
+		reg.broadcastEvent(event)
+	})
+	agentMs := time.Since(agentStart).Milliseconds()
+	if err != nil {
+		log.Printf("Agent error (%dms): %v", agentMs, err)
+		writeJSONError(w, fmt.Sprintf("Agent error: %v", err), http.StatusInternalServerError)
+		return
+	}
+	log.Printf("Agent response (%dms): %s", agentMs, agentResponse)
+
+	// TTS the agent response
+	var ttsB64 string
+	if speakFn != nil && agentResponse != "" {
+		voice := ttsVoice
+		if voice == "" {
+			voice = "default"
+		}
+		ttsStart := time.Now()
+		ttsAudio, err := speakFn(agentResponse, voice, "English")
+		ttsMs := time.Since(ttsStart).Milliseconds()
+		if err != nil {
+			log.Printf("TTS failed (%dms): %v", ttsMs, err)
+		} else {
+			ttsB64 = base64.StdEncoding.EncodeToString(ttsAudio)
+			log.Printf("TTS: %d bytes (%dms)", len(ttsAudio), ttsMs)
+		}
+	}
+
+	resp := map[string]interface{}{
+		"success":       true,
+		"mode":          "talk",
+		"rawText":       rawText,
+		"agentResponse": agentResponse,
+		"sttMs":         sttMs,
+		"agentMs":       agentMs,
 	}
 	if ttsB64 != "" {
 		resp["ttsAudio"] = ttsB64

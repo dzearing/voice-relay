@@ -163,6 +163,25 @@ func (r *registry) broadcastAudio(wavData []byte) {
 	}
 }
 
+// broadcastEvent sends a JSON event to all observer connections.
+func (r *registry) broadcastEvent(data map[string]interface{}) {
+	msg, err := json.Marshal(data)
+	if err != nil {
+		return
+	}
+
+	r.mu.RLock()
+	observers := make([]*websocket.Conn, 0, len(r.observers))
+	for conn := range r.observers {
+		observers = append(observers, conn)
+	}
+	r.mu.RUnlock()
+
+	for _, conn := range observers {
+		conn.WriteMessage(websocket.TextMessage, msg)
+	}
+}
+
 func (r *registry) sendText(name, text string) bool {
 	r.mu.RLock()
 	svc, ok := r.services[name]

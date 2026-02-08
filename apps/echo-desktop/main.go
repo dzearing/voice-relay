@@ -17,6 +17,7 @@ import (
 	"github.com/getlantern/systray"
 	"github.com/ncruces/zenity"
 
+	"github.com/voice-relay/echo-desktop/internal/agent"
 	"github.com/voice-relay/echo-desktop/internal/client"
 	"github.com/voice-relay/echo-desktop/internal/config"
 	"github.com/voice-relay/echo-desktop/internal/coordinator"
@@ -338,6 +339,21 @@ func initCoordinator() {
 				log.Printf("TTS engine ready (Piper)")
 			}
 		}
+	}
+
+	// Initialize talk-mode agent (uses the same llama-server as LLM cleanup)
+	toolsDir := filepath.Join(dataDir, "tools")
+	if err := agent.EnsureDefaultTools(toolsDir); err != nil {
+		log.Printf("Failed to create default tools: %v", err)
+	}
+	talkAgent, err := agent.NewAgent("http://127.0.0.1:8179", toolsDir)
+	if err != nil {
+		log.Printf("Talk agent not available: %v", err)
+	} else {
+		coordinator.SetAgentFunc(func(rawText string, onProgress func(string, string)) (string, error) {
+			return talkAgent.RunWithProgress(rawText, agent.ProgressFunc(onProgress))
+		})
+		log.Printf("Talk agent ready")
 	}
 
 	// Start coordinator HTTP server (blocks)
