@@ -9,3 +9,7 @@ cd apps/echo-desktop && go build -o VoiceRelay.exe . && ./VoiceRelay.exe --force
 ```
 
 The `--force` flag kills any existing VoiceRelay instances before starting the new one.
+
+## Releasing
+
+When releasing a new version, follow [docs/release.md](docs/release.md).

@@ -20,7 +20,8 @@ var (
 	sttFunc         func(audioData []byte, filename string) (string, error)
 	llmFunc         func(rawText string) (string, string, error)
 	ttsFunc         func(text, voice, language string) ([]byte, error)
-	ttsChangeFunc   func(voiceName string) error // callback to switch voice at runtime
+	ttsChangeFunc   func(voiceName string) error              // callback to switch voice at runtime
+	ttsPreviewFunc  func(text, voiceName string) ([]byte, error) // preview any voice without changing selection
 	funcMu          sync.RWMutex
 	coordinatorPort int
 	externalURL     string // e.g. "http://100.x.x.x:53937" for Tailscale
@@ -93,6 +94,13 @@ func SetTTSChangeFunc(fn func(voiceName string) error) {
 	funcMu.Lock()
 	defer funcMu.Unlock()
 	ttsChangeFunc = fn
+}
+
+// SetTTSPreviewFunc sets the callback to preview any voice without changing selection.
+func SetTTSPreviewFunc(fn func(text, voiceName string) ([]byte, error)) {
+	funcMu.Lock()
+	defer funcMu.Unlock()
+	ttsPreviewFunc = fn
 }
 
 var upgrader = websocket.Upgrader{
@@ -518,7 +526,8 @@ func handleTTSPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Text string `json:"text"`
+		Text  string `json:"text"`
+		Voice string `json:"voice"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSONError(w, "Invalid request", http.StatusBadRequest)
@@ -528,21 +537,20 @@ func handleTTSPreview(w http.ResponseWriter, r *http.Request) {
 	if text == "" {
 		text = "Hello, this is a preview of my voice."
 	}
+	voice := body.Voice
+	if voice == "" {
+		voice = ttsVoice
+	}
 
 	funcMu.RLock()
-	speakFn := ttsFunc
+	previewFn := ttsPreviewFunc
 	funcMu.RUnlock()
-	if speakFn == nil {
+	if previewFn == nil {
 		writeJSONError(w, "TTS not available", http.StatusServiceUnavailable)
 		return
 	}
 
-	voice := ttsVoice
-	if voice == "" {
-		voice = "default"
-	}
-
-	audioData, err := speakFn(text, voice, "English")
+	audioData, err := previewFn(text, voice)
 	if err != nil {
 		writeJSONError(w, fmt.Sprintf("TTS failed: %v", err), http.StatusInternalServerError)
 		return

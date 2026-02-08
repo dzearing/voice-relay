@@ -328,6 +328,13 @@ func initCoordinator() {
 					log.Printf("TTS voice changed to: %s", newVoice)
 					return nil
 				})
+				coordinator.SetTTSPreviewFunc(func(text, voice string) ([]byte, error) {
+					mp, err := tts.EnsureVoice(modelsDir, voice)
+					if err != nil {
+						return nil, err
+					}
+					return tts.NewEngine(piperPath, mp).Synthesize(text)
+				})
 				log.Printf("TTS engine ready (Piper)")
 			}
 		}

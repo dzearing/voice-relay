@@ -512,39 +512,38 @@ async function loadCurrentVoice() {
 function renderVoiceList() {
   voiceListEl.innerHTML = VOICE_PRESETS.map((v) => `
     <div class="voice-item${v.id === currentVoice ? " active" : ""}" data-voice="${v.id}">
-      <div class="voice-item-check">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="20 6 9 17 4 12"/>
-        </svg>
+      <div class="voice-item-select" data-voice="${v.id}">
+        <div class="voice-item-check">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>
+        </div>
+        <div class="voice-item-info">
+          <div class="voice-item-name">${v.name}</div>
+          <div class="voice-item-desc">${v.desc}</div>
+        </div>
       </div>
-      <div class="voice-item-info">
-        <div class="voice-item-name">${v.name}</div>
-        <div class="voice-item-desc">${v.desc}</div>
-      </div>
-      <button class="voice-preview-btn" data-voice="${v.id}" aria-label="Preview ${v.name}">
+      <div class="voice-preview-btn" role="button" tabindex="0" data-voice="${v.id}" aria-label="Preview ${v.name}">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
           <polygon points="5 3 19 12 5 21 5 3"/>
         </svg>
-      </button>
+      </div>
     </div>
   `).join("");
 
-  // Select voice on row tap
-  voiceListEl.querySelectorAll(".voice-item").forEach((el) => {
-    el.addEventListener("click", (e) => {
-      // Don't select when tapping the preview button
-      if ((e.target as HTMLElement).closest(".voice-preview-btn")) return;
+  // Select voice on select area tap
+  voiceListEl.querySelectorAll(".voice-item-select").forEach((el) => {
+    el.addEventListener("click", () => {
       const voice = (el as HTMLElement).dataset.voice!;
       selectVoice(voice);
     });
   });
 
-  // Preview button
+  // Preview button — does NOT select
   voiceListEl.querySelectorAll(".voice-preview-btn").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
+    btn.addEventListener("click", () => {
       const voice = (btn as HTMLElement).dataset.voice!;
-      previewVoice(voice, btn as HTMLButtonElement);
+      previewVoice(voice, btn as HTMLElement);
     });
   });
 }
@@ -571,20 +570,7 @@ async function selectVoice(voice: string) {
   }
 }
 
-async function previewVoice(voice: string, btn: HTMLButtonElement) {
-  // First switch to this voice so piper uses the right model
-  if (voice !== currentVoice) {
-    currentVoice = voice;
-    renderVoiceList();
-    try {
-      await fetch(`${API_BASE}/tts-voice`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ voice }),
-      });
-    } catch {}
-  }
-
+async function previewVoice(voice: string, btn: HTMLElement) {
   // Show loading state
   btn.classList.add("loading");
   btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>`;
@@ -593,7 +579,7 @@ async function previewVoice(voice: string, btn: HTMLButtonElement) {
     const resp = await fetch(`${API_BASE}/tts-preview`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: "Hello, this is how I sound." }),
+      body: JSON.stringify({ text: "Hello, this is how I sound.", voice }),
     });
     if (resp.ok) {
       const blob = await resp.blob();

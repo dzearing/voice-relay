@@ -798,30 +798,36 @@ button, select {
 
 .voice-item {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  transition: background var(--transition-fast);
-  -webkit-tap-highlight-color: transparent;
-  text-align: left;
-  width: 100%;
-  font-family: inherit;
-  color: var(--text-primary);
+  align-items: stretch;
 }
 
 .voice-item:not(:last-child) {
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.voice-item:active {
-  background: rgba(255, 255, 255, 0.06);
-}
-
 .voice-item.active {
   background: rgba(0, 212, 255, 0.08);
+}
+
+.voice-item-select {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 0 14px 16px;
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+  text-align: left;
+  font-family: inherit;
+  color: var(--text-primary);
+}
+
+.voice-item-select:active {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .voice-item-check {
@@ -861,12 +867,11 @@ button, select {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 56px;
   flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--bg-glass-border);
-  border-radius: 50%;
+  background: transparent;
+  border: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
   color: var(--text-secondary);
   cursor: pointer;
   transition: all var(--transition-fast);
@@ -874,9 +879,7 @@ button, select {
 }
 
 .voice-preview-btn:active {
-  transform: scale(0.9);
-  background: var(--accent-cyan-soft);
-  border-color: rgba(0, 212, 255, 0.3);
+  background: rgba(0, 212, 255, 0.08);
   color: var(--accent-cyan);
 }
 
