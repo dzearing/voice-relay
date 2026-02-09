@@ -23,6 +23,7 @@ import (
 	"github.com/voice-relay/echo-desktop/internal/coordinator"
 	"github.com/voice-relay/echo-desktop/internal/keyboard"
 	"github.com/voice-relay/echo-desktop/internal/llm"
+	"github.com/voice-relay/echo-desktop/internal/notifications"
 	"github.com/voice-relay/echo-desktop/internal/setup"
 	"github.com/voice-relay/echo-desktop/internal/stt"
 	"github.com/voice-relay/echo-desktop/internal/tray"
@@ -307,6 +308,9 @@ func initCoordinator() {
 					coordinator.SetLLMFunc(func(rawText string) (string, string, error) {
 						return llmEngine.CleanupText(rawText)
 					})
+					coordinator.SetNotifGenFunc(func() (map[string]string, error) {
+						return llmEngine.GenerateNotification()
+					})
 				}
 			}
 		}
@@ -356,6 +360,29 @@ func initCoordinator() {
 				go coordinator.PreCacheInterimPhrases()
 			}
 		}
+	}
+
+	// Initialize notification watcher
+	notifDir := filepath.Join(dataDir, "notifications")
+	var notifTTSFunc notifications.TTSFunc
+	if ttsEngine != nil {
+		notifTTSFunc = func(text, voice, language string) ([]byte, error) {
+			return ttsEngine.Synthesize(text)
+		}
+	}
+	notifWatcher := notifications.NewWatcher(notifDir, notifTTSFunc, func() string {
+		v := cfg.TTSVoice
+		if v == "" || v == "default" {
+			v = "en_US-lessac-high"
+		}
+		return v
+	}, coordinator.BroadcastNotificationsReady)
+	if err := notifWatcher.EnsureDirs(); err != nil {
+		log.Printf("Failed to create notification dirs: %v", err)
+	} else {
+		coordinator.SetNotificationWatcher(notifWatcher)
+		go notifWatcher.Start()
+		log.Printf("Notification watcher ready (%s)", notifDir)
 	}
 
 	// Initialize talk-mode agent (uses the same llama-server as LLM cleanup)

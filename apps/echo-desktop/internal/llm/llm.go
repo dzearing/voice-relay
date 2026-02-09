@@ -187,6 +187,80 @@ func (e *Engine) CleanupText(rawText string) (string, string, error) {
 	return result, "", nil
 }
 
+const notifGenPrompt = `Generate a realistic random notification. You MUST pick a DIFFERENT category each time from this list — never repeat the same type twice in a row:
+- CI/CD build status for a software project (e.g. "Build #847 failed on main", "Deploy to staging complete")
+- Calendar/meeting reminder (e.g. "Design review in 15 min", "1:1 with Sarah moved to 3pm")
+- Git/code review (e.g. "PR #234 approved by Alex", "3 comments on your PR")
+- Server/infra alert (e.g. "CPU usage at 92% on prod-west-2", "SSL cert expires in 3 days")
+- Weather update (e.g. "Rain starting in 20 min", "Freeze warning tonight")
+- Smart home event (e.g. "Front door unlocked", "Garage door left open 30 min")
+- News/finance (e.g. "AAPL up 4.2% after earnings", "Breaking: Fed holds rates steady")
+- Health/fitness (e.g. "Stand goal reached", "Heart rate elevated to 120 bpm")
+- Message/social (e.g. "2 new messages in #engineering", "Mom shared a photo")
+
+Reply with ONLY a JSON object, no other text:
+{"title": "short title", "summary": "1-2 sentence summary to read aloud", "details": "optional extra context, or empty string", "priority": "low|normal|high", "source": "source app or system name"}
+
+Be specific with names, numbers, times. Make it feel like a real notification.`
+
+// GenerateNotification asks the LLM to produce a random notification JSON.
+func (e *Engine) GenerateNotification() (map[string]string, error) {
+	type message struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"model": "qwen3",
+		"messages": []message{
+			{Role: "system", Content: notifGenPrompt},
+			{Role: "user", Content: "Generate one notification. /no_think"},
+		},
+		"max_tokens":  256,
+		"temperature": 1.0,
+	})
+
+	resp, err := http.Post(e.apiURL+"/v1/chat/completions", "application/json", bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("LLM request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("LLM error %d: %s", resp.StatusCode, string(body))
+	}
+
+	var data struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, fmt.Errorf("decode failed: %w", err)
+	}
+	if len(data.Choices) == 0 {
+		return nil, fmt.Errorf("no choices returned")
+	}
+
+	result := data.Choices[0].Message.Content
+	if idx := strings.Index(result, "</think>"); idx >= 0 {
+		result = result[idx+len("</think>"):]
+	}
+	result = strings.TrimSpace(result)
+
+	var notif map[string]string
+	if err := json.Unmarshal([]byte(result), &notif); err != nil {
+		return nil, fmt.Errorf("invalid JSON from LLM: %s", result)
+	}
+	if notif["title"] == "" || notif["summary"] == "" {
+		return nil, fmt.Errorf("missing title or summary: %s", result)
+	}
+	return notif, nil
+}
+
 // Close stops the llama-server subprocess.
 func (e *Engine) Close() {
 	if e.cmd != nil && e.cmd.Process != nil {

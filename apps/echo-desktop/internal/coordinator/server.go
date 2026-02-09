@@ -13,6 +13,8 @@ import (
 
 	"github.com/gorilla/websocket"
 	qrcode "github.com/skip2/go-qrcode"
+
+	"github.com/voice-relay/echo-desktop/internal/notifications"
 )
 
 var (
@@ -28,6 +30,9 @@ var (
 	externalURL     string // e.g. "http://100.x.x.x:53937" for Tailscale
 	ttsVoice        string // configured TTS voice name
 	devURL          string // dev-mode Vite URL (HTTPS via Tailscale)
+
+	notifWatcher *notifications.Watcher
+	notifGenFunc func() (map[string]string, error) // generates random notification via LLM
 
 	interimCache   map[string]string // phrase → base64 WAV
 	interimCacheMu sync.RWMutex
@@ -125,6 +130,25 @@ func SetAgentFunc(fn func(rawText string, onProgress func(string, string)) (stri
 	agentFunc = fn
 }
 
+// SetNotificationWatcher sets the notification watcher used by the /notifications endpoints.
+func SetNotificationWatcher(w *notifications.Watcher) {
+	notifWatcher = w
+}
+
+// SetNotifGenFunc sets the function used to generate test notifications via the LLM.
+func SetNotifGenFunc(fn func() (map[string]string, error)) {
+	notifGenFunc = fn
+}
+
+// BroadcastNotificationsReady sends a notifications_updated event to all PWA observers.
+func BroadcastNotificationsReady() {
+	if reg != nil {
+		reg.broadcastEvent(map[string]interface{}{
+			"type": "notifications_updated",
+		})
+	}
+}
+
 // interimPhrases are the fixed phrases spoken while the agent searches.
 var interimPhrases = []string{
 	"Let me look that up.",
@@ -185,6 +209,10 @@ func Start(port int) error {
 	mux.HandleFunc("/connect-info", handleConnectInfo)
 	mux.HandleFunc("/tts-voice", handleTTSVoice)
 	mux.HandleFunc("/tts-preview", handleTTSPreview)
+	mux.HandleFunc("/notifications", handleNotifications)
+	mux.HandleFunc("/notifications/dismiss", handleNotifDismiss)
+	mux.HandleFunc("/notifications/dismiss-all", handleNotifDismissAll)
+	mux.HandleFunc("/notifications/test", handleNotifTest)
 
 	// Serve PWA static files (fallback for all other routes)
 	mux.Handle("/", pwaHandler())
@@ -786,4 +814,86 @@ func handleTTSPreview(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "audio/wav")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(audioData)))
 	w.Write(audioData)
+}
+
+func handleNotifications(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if notifWatcher == nil {
+		writeJSON(w, []interface{}{})
+		return
+	}
+	writeJSON(w, notifWatcher.ListProcessed())
+}
+
+func handleNotifDismiss(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if notifWatcher == nil {
+		writeJSONError(w, "Notifications not available", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ID == "" {
+		writeJSONError(w, "Missing id", http.StatusBadRequest)
+		return
+	}
+	if err := notifWatcher.Dismiss(body.ID); err != nil {
+		writeJSONError(w, fmt.Sprintf("Dismiss failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	BroadcastNotificationsReady()
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func handleNotifDismissAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if notifWatcher == nil {
+		writeJSONError(w, "Notifications not available", http.StatusServiceUnavailable)
+		return
+	}
+	if err := notifWatcher.DismissAll(); err != nil {
+		writeJSONError(w, fmt.Sprintf("Dismiss all failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	BroadcastNotificationsReady()
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func handleNotifTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if notifWatcher == nil {
+		writeJSONError(w, "Notifications not available", http.StatusServiceUnavailable)
+		return
+	}
+	if notifGenFunc == nil {
+		writeJSONError(w, "LLM not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	fields, err := notifGenFunc()
+	if err != nil {
+		writeJSONError(w, fmt.Sprintf("Generate failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if err := notifWatcher.Submit(fields); err != nil {
+		writeJSONError(w, fmt.Sprintf("Submit failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("Test notification submitted: %s", fields["title"])
+	writeJSON(w, map[string]interface{}{"ok": true, "title": fields["title"]})
 }
