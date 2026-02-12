@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -32,6 +33,29 @@ Output: {"cleaned": "Can you pick up some milk on the way home?", "summary": "pi
 
 Input: "hey the meeting is at 3, no wait, 4 pm"
 Output: {"cleaned": "Hey, the meeting is at 4 PM.", "summary": "meeting time update"}`
+
+// chatMessage is a message in the OpenAI chat format.
+type chatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// chatRequest is a request to the chat completions API.
+type chatRequest struct {
+	Model       string        `json:"model"`
+	Messages    []chatMessage `json:"messages"`
+	MaxTokens   int           `json:"max_tokens"`
+	Temperature float64       `json:"temperature"`
+}
+
+// chatResponse is a response from the chat completions API.
+type chatResponse struct {
+	Choices []struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	} `json:"choices"`
+}
 
 // Engine manages llama-server as a subprocess for text cleanup.
 type Engine struct {
@@ -66,6 +90,12 @@ func NewEngine(modelPath, serverPath string, port int) (*Engine, error) {
 }
 
 func (e *Engine) start() error {
+	// Use half the available CPU threads (min 4) to avoid saturating all cores
+	threads := runtime.NumCPU() / 2
+	if threads < 4 {
+		threads = 4
+	}
+
 	args := []string{
 		"--model", e.modelPath,
 		"--port", fmt.Sprintf("%d", e.port),
@@ -73,6 +103,13 @@ func (e *Engine) start() error {
 		"--ctx-size", "4096",
 		"--cache-ram", "0",
 		"--jinja",
+		"--threads", fmt.Sprintf("%d", threads),
+	}
+
+	// Offload all layers to GPU when NVIDIA GPU is available
+	if HasNvidiaGPU() {
+		args = append(args, "--n-gpu-layers", "99")
+		log.Printf("llama-server: GPU offloading enabled (all layers)")
 	}
 
 	e.cmd = exec.Command(e.serverPath, args...)
@@ -114,19 +151,14 @@ func (e *Engine) waitReady(timeout time.Duration) error {
 // CleanupText sends raw transcribed text through the LLM for cleanup.
 // Returns (cleaned text, summary, error).
 func (e *Engine) CleanupText(rawText string) (string, string, error) {
-	type message struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	}
-
-	reqBody, _ := json.Marshal(map[string]interface{}{
-		"model": "qwen3",
-		"messages": []message{
+	reqBody, _ := json.Marshal(chatRequest{
+		Model: "qwen3",
+		Messages: []chatMessage{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: rawText + " /no_think"},
 		},
-		"max_tokens":  512,
-		"temperature": 0.1,
+		MaxTokens:   512,
+		Temperature: 0.1,
 	})
 
 	resp, err := http.Post(e.apiURL+"/v1/chat/completions", "application/json", bytes.NewReader(reqBody))
@@ -142,13 +174,7 @@ func (e *Engine) CleanupText(rawText string) (string, string, error) {
 		return rawText, "", nil
 	}
 
-	var data struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
+	var data chatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		log.Printf("Failed to decode LLM response: %v, returning raw text", err)
 		return rawText, "", nil
@@ -187,6 +213,76 @@ func (e *Engine) CleanupText(rawText string) (string, string, error) {
 	return result, "", nil
 }
 
+const notifSummarizePrompt = `You are summarizing a Claude Code assistant response for a voice notification (text-to-speech).
+
+Given the user's request and the assistant's response, generate a JSON object with:
+- "title": A short, grammatically correct sentence (max 60 chars) describing what the user asked for. Start with "You asked to..." and use natural phrasing. Examples: "You asked to update the autoplay control", "You asked to fix the login bug", "You asked about deployment options".
+- "summary": A 1-2 sentence spoken summary of what Claude did. Write naturally for speech. No markdown, no code, no URLs. Max 200 chars.
+- "details": A longer plain-text summary (3-5 sentences) covering the key points. No markdown. Max 800 chars.
+
+Reply with ONLY the JSON object, no other text.`
+
+// SummarizeNotification uses the LLM to generate title/summary/details from raw transcript text.
+func (e *Engine) SummarizeNotification(userText, assistantText string) (string, string, string, error) {
+	// Truncate assistant text to avoid overwhelming the context
+	if len(assistantText) > 3000 {
+		assistantText = assistantText[:3000] + "\n..."
+	}
+
+	userContent := fmt.Sprintf("USER REQUEST:\n%s\n\nASSISTANT RESPONSE:\n%s /no_think", userText, assistantText)
+
+	reqBody, _ := json.Marshal(chatRequest{
+		Model: "qwen3",
+		Messages: []chatMessage{
+			{Role: "system", Content: notifSummarizePrompt},
+			{Role: "user", Content: userContent},
+		},
+		MaxTokens:   512,
+		Temperature: 0.3,
+	})
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Post(e.apiURL+"/v1/chat/completions", "application/json", bytes.NewReader(reqBody))
+	if err != nil {
+		return "", "", "", fmt.Errorf("LLM request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", "", "", fmt.Errorf("LLM error %d: %s", resp.StatusCode, string(body))
+	}
+
+	var data chatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return "", "", "", fmt.Errorf("decode failed: %w", err)
+	}
+	if len(data.Choices) == 0 {
+		return "", "", "", fmt.Errorf("no choices returned")
+	}
+
+	result := data.Choices[0].Message.Content
+	if idx := strings.Index(result, "</think>"); idx >= 0 {
+		result = result[idx+len("</think>"):]
+	}
+	result = strings.TrimSpace(result)
+
+	var parsed struct {
+		Title   string `json:"title"`
+		Summary string `json:"summary"`
+		Details string `json:"details"`
+	}
+	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
+		return "", "", "", fmt.Errorf("invalid JSON from LLM: %s", result)
+	}
+	if parsed.Title == "" || parsed.Summary == "" {
+		return "", "", "", fmt.Errorf("missing title or summary: %s", result)
+	}
+
+	log.Printf("LLM summarized notification: %q / %q", parsed.Title, parsed.Summary)
+	return parsed.Title, parsed.Summary, parsed.Details, nil
+}
+
 const notifGenPrompt = `Generate a realistic random notification. You MUST pick a DIFFERENT category each time from this list — never repeat the same type twice in a row:
 - CI/CD build status for a software project (e.g. "Build #847 failed on main", "Deploy to staging complete")
 - Calendar/meeting reminder (e.g. "Design review in 15 min", "1:1 with Sarah moved to 3pm")
@@ -205,19 +301,14 @@ Be specific with names, numbers, times. Make it feel like a real notification.`
 
 // GenerateNotification asks the LLM to produce a random notification JSON.
 func (e *Engine) GenerateNotification() (map[string]string, error) {
-	type message struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	}
-
-	reqBody, _ := json.Marshal(map[string]interface{}{
-		"model": "qwen3",
-		"messages": []message{
+	reqBody, _ := json.Marshal(chatRequest{
+		Model: "qwen3",
+		Messages: []chatMessage{
 			{Role: "system", Content: notifGenPrompt},
 			{Role: "user", Content: "Generate one notification. /no_think"},
 		},
-		"max_tokens":  256,
-		"temperature": 1.0,
+		MaxTokens:   256,
+		Temperature: 1.0,
 	})
 
 	resp, err := http.Post(e.apiURL+"/v1/chat/completions", "application/json", bytes.NewReader(reqBody))
@@ -231,13 +322,7 @@ func (e *Engine) GenerateNotification() (map[string]string, error) {
 		return nil, fmt.Errorf("LLM error %d: %s", resp.StatusCode, string(body))
 	}
 
-	var data struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
+	var data chatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return nil, fmt.Errorf("decode failed: %w", err)
 	}

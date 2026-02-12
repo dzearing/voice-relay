@@ -31,6 +31,13 @@
         </div>
         <h1>Voice Relay</h1>
         <span id="version-chip" class="version-chip"></span>
+        <button id="notif-btn" class="notif-btn" aria-label="Notifications">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/>
+            <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>
+          </svg>
+          <span id="notif-count" class="notif-count"></span>
+        </button>
         <button id="settings-btn" class="settings-btn" aria-label="Settings">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
@@ -124,23 +131,6 @@
         </button>
       </main>
 
-      <!-- Notification Banner (iOS-style) -->
-      <div id="notif-banner" class="notif-banner">
-        <div class="notif-banner-icon">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/>
-            <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>
-          </svg>
-        </div>
-        <div class="notif-banner-body">
-          <div class="notif-banner-top">
-            <span class="notif-banner-app">Voice Relay</span>
-            <span class="notif-banner-time">now</span>
-          </div>
-          <div id="notif-banner-title" class="notif-banner-title"></div>
-          <div id="notif-banner-text" class="notif-banner-preview"></div>
-        </div>
-      </div>
     </div>
 
     <!-- Results Overlay -->
@@ -187,6 +177,18 @@
         </div>
         <div class="settings-body">
           <div class="settings-section">
+            <div class="settings-section-label">Notifications</div>
+            <div class="settings-toggle-row" id="autoplay-notif-row">
+              <div class="settings-toggle-info">
+                <div class="settings-toggle-name">Auto-play new notifications</div>
+                <div class="settings-toggle-desc">Automatically play audio when a new notification arrives</div>
+              </div>
+              <button class="settings-toggle" id="autoplay-notif-toggle" role="switch" aria-checked="false">
+                <span class="settings-toggle-knob"></span>
+              </button>
+            </div>
+          </div>
+          <div class="settings-section">
             <div class="settings-section-label">Voice</div>
             <div id="voice-list" class="voice-list"></div>
           </div>
@@ -202,18 +204,10 @@
           <h2>Notifications <span id="notif-count-chip" class="notif-count-chip"></span></h2>
           <div class="notif-toolbar">
             <button id="notif-autoplay-btn" class="notif-autoplay-btn" aria-label="Auto-play">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polygon points="5 3 19 12 5 21 5 3"/>
-              </svg>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
               Auto
             </button>
             <button id="notif-dismiss-all-btn" class="notif-dismiss-all-btn">Clear All</button>
-            <button id="close-notif-btn" class="close-overlay-btn" aria-label="Close">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M18 6 6 18"/>
-                <path d="m6 6 12 12"/>
-              </svg>
-            </button>
           </div>
         </div>
         <div id="notif-carousel" class="notif-carousel"></div>

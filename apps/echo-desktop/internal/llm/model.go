@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -111,11 +112,26 @@ func ServerBinaryName() string {
 	return "llama-server"
 }
 
+// HasNvidiaGPU returns true if an NVIDIA GPU is detected on the system.
+func HasNvidiaGPU() bool {
+	cmd := exec.Command("nvidia-smi", "--query-gpu=name", "--format=csv,noheader")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return len(strings.TrimSpace(string(out))) > 0
+}
+
 // llamaServerAssetSuffix returns the suffix to match in llama.cpp release asset names.
 // Assets are named like "llama-b7951-bin-win-cpu-x64.zip" with a version prefix.
+// On Windows with an NVIDIA GPU, prefers the CUDA build for GPU offloading.
 func llamaServerAssetSuffix() string {
 	switch runtime.GOOS {
 	case "windows":
+		if HasNvidiaGPU() {
+			log.Printf("NVIDIA GPU detected, using CUDA build of llama-server")
+			return "bin-win-cuda-cu12.2-x64.zip"
+		}
 		return "bin-win-cpu-x64.zip"
 	case "darwin":
 		if runtime.GOARCH == "arm64" {

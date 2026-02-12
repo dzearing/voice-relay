@@ -15,6 +15,15 @@ import (
 	"time"
 )
 
+// maxSTTThreads returns a reasonable thread count for whisper-server.
+func maxSTTThreads() int {
+	threads := runtime.NumCPU() / 2
+	if threads < 4 {
+		threads = 4
+	}
+	return threads
+}
+
 // Engine manages whisper-server as a subprocess and communicates via HTTP.
 type Engine struct {
 	modelPath  string
@@ -53,6 +62,7 @@ func (e *Engine) start() error {
 		"--model", e.modelPath,
 		"--port", fmt.Sprintf("%d", e.port),
 		"--host", "127.0.0.1",
+		"--threads", fmt.Sprintf("%d", maxSTTThreads()),
 	}
 
 	e.cmd = exec.Command(e.serverPath, args...)

@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -ExecutionPolicy Bypass -NoProfile -File \"D:/git/voice-relay/.claude/hooks/notify-done.ps1\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -75,8 +75,19 @@ func DetectFunnel() string {
 	}
 
 	// Extract the hostname from the Web map keys (e.g. "machine.tail1234.ts.net:443")
+	// Prefer the :443 entry since other ports may be dev funnels
 	for hostPort := range fs.Web {
-		host := strings.TrimSuffix(hostPort, ":443")
+		if strings.HasSuffix(hostPort, ":443") {
+			host := strings.TrimSuffix(hostPort, ":443")
+			return fmt.Sprintf("https://%s", host)
+		}
+	}
+	// Fallback: use any entry, stripping the port
+	for hostPort := range fs.Web {
+		host := hostPort
+		if idx := strings.LastIndex(host, ":"); idx > 0 {
+			host = host[:idx]
+		}
 		return fmt.Sprintf("https://%s", host)
 	}
 
@@ -125,8 +136,13 @@ func EnsureDevFunnel(devPort int, baseURL string) string {
 	}
 
 	// Construct dev URL: take the base hostname and add the dev port
-	// baseURL is like "https://machine.tail1234.ts.net"
-	devURL := fmt.Sprintf("%s:%d", baseURL, devPort)
+	// baseURL may already contain a port (e.g. "https://machine.tail1234.ts.net:5001")
+	// so strip it before appending the dev port
+	host := baseURL
+	if idx := strings.LastIndex(host, ":"); idx > strings.LastIndex(host, "]") && idx > strings.Index(host, "//") {
+		host = host[:idx]
+	}
+	devURL := fmt.Sprintf("%s:%d", host, devPort)
 	log.Printf("Dev funnel started: %s", devURL)
 	return devURL
 }

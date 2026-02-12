@@ -377,6 +377,11 @@ func initCoordinator() {
 		}
 		return v
 	}, coordinator.BroadcastNotificationsReady)
+	if llmEngine != nil {
+		notifWatcher.SetSummarizeFunc(func(userText, assistantText string) (string, string, string, error) {
+			return llmEngine.SummarizeNotification(userText, assistantText)
+		})
+	}
 	if err := notifWatcher.EnsureDirs(); err != nil {
 		log.Printf("Failed to create notification dirs: %v", err)
 	} else {

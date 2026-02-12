@@ -23,21 +23,29 @@ type Notification struct {
 	Source       string `json:"source,omitempty"`
 	CreatedAt    string `json:"created_at,omitempty"`
 	ProcessedAt  string `json:"processed_at,omitempty"`
+	TitleAudio   string `json:"title_audio,omitempty"`
 	SummaryAudio string `json:"summary_audio,omitempty"`
 	DetailsAudio string `json:"details_audio,omitempty"`
+	// Raw fields for LLM summarization (hook writes these, backend summarizes)
+	RawUserText      string `json:"raw_user_text,omitempty"`
+	RawAssistantText string `json:"raw_assistant_text,omitempty"`
 }
 
 // TTSFunc synthesizes text to WAV audio bytes.
 type TTSFunc func(text, voice, language string) ([]byte, error)
 
+// SummarizeFunc takes raw user + assistant text and returns title, summary, details.
+type SummarizeFunc func(userText, assistantText string) (title, summary, details string, err error)
+
 // Watcher polls a pending directory for notification JSON files and processes them.
 type Watcher struct {
-	baseDir    string
-	ttsFunc    TTSFunc
-	ttsVoice   func() string // returns current voice name
-	onReady    func()        // called after processing a notification
-	stopCh     chan struct{}
-	mu         sync.Mutex
+	baseDir      string
+	ttsFunc      TTSFunc
+	ttsVoice     func() string // returns current voice name
+	summarize    SummarizeFunc // optional LLM summarization
+	onReady      func()        // called after processing a notification
+	stopCh       chan struct{}
+	mu           sync.Mutex
 }
 
 // NewWatcher creates a new notification watcher.
@@ -49,6 +57,11 @@ func NewWatcher(baseDir string, tts TTSFunc, voiceFn func() string, onReady func
 		onReady:  onReady,
 		stopCh:   make(chan struct{}),
 	}
+}
+
+// SetSummarizeFunc sets the LLM summarization function for raw notifications.
+func (w *Watcher) SetSummarizeFunc(fn SummarizeFunc) {
+	w.summarize = fn
 }
 
 // EnsureDirs creates the notification pipeline directories.
@@ -171,6 +184,26 @@ func (w *Watcher) processPending() {
 			notif.ID = strings.TrimSuffix(e.Name(), ".json")
 		}
 
+		// If raw text is present but no title/summary, run LLM summarization
+		if (notif.Title == "" || notif.Summary == "") && notif.RawUserText != "" && notif.RawAssistantText != "" {
+			if w.summarize != nil {
+				log.Printf("notifications: summarizing raw text for %s via LLM", e.Name())
+				title, summary, details, err := w.summarize(notif.RawUserText, notif.RawAssistantText)
+				if err != nil {
+					log.Printf("notifications: LLM summarization failed for %s: %v", e.Name(), err)
+				} else {
+					notif.Title = title
+					notif.Summary = summary
+					if details != "" {
+						notif.Details = details
+					}
+				}
+			}
+			// Clear raw fields from output
+			notif.RawUserText = ""
+			notif.RawAssistantText = ""
+		}
+
 		// Validate required fields
 		if notif.Title == "" || notif.Summary == "" {
 			log.Printf("notifications: %s missing title or summary, archiving", e.Name())
@@ -185,6 +218,12 @@ func (w *Watcher) processPending() {
 				if v := w.ttsVoice(); v != "" {
 					voice = v
 				}
+			}
+
+			if audio, err := w.ttsFunc(notif.Title, voice, "English"); err == nil {
+				notif.TitleAudio = base64.StdEncoding.EncodeToString(audio)
+			} else {
+				log.Printf("notifications: TTS failed for title: %v", err)
 			}
 
 			if audio, err := w.ttsFunc(notif.Summary, voice, "English"); err == nil {

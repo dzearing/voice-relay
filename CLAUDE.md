@@ -28,6 +28,10 @@ npm run dev:pwa
 
 Then open `http://localhost:5001` in the browser. Edits to `packages/pwa/` will hot-reload.
 
+## Notifications
+
+VoiceRelay has a file-based notification pipeline with TTS audio. Drop a JSON file (with `title` and `summary` fields) into the `pending/` directory and it gets processed, narrated, and pushed to the PWA. See [docs/notifications.md](docs/notifications.md) for the full API and examples.
+
 ## Releasing
 
 When releasing a new version, follow [docs/release.md](docs/release.md).
