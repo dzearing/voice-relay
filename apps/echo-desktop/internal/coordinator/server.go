@@ -14,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 	qrcode "github.com/skip2/go-qrcode"
 
+	"github.com/voice-relay/echo-desktop/internal/hooks"
 	"github.com/voice-relay/echo-desktop/internal/notifications"
 )
 
@@ -33,6 +34,7 @@ var (
 
 	notifWatcher *notifications.Watcher
 	notifGenFunc func() (map[string]string, error) // generates random notification via LLM
+	notifDir     string                             // notification directory for hook install
 
 	interimCache   map[string]string // phrase → base64 WAV
 	interimCacheMu sync.RWMutex
@@ -140,6 +142,11 @@ func SetNotifGenFunc(fn func() (map[string]string, error)) {
 	notifGenFunc = fn
 }
 
+// SetNotifDir sets the notification directory for hook installation.
+func SetNotifDir(dir string) {
+	notifDir = dir
+}
+
 // BroadcastNotificationsReady sends a notifications_updated event to all PWA observers.
 func BroadcastNotificationsReady() {
 	if reg != nil {
@@ -213,6 +220,10 @@ func Start(port int) error {
 	mux.HandleFunc("/notifications/dismiss", handleNotifDismiss)
 	mux.HandleFunc("/notifications/dismiss-all", handleNotifDismissAll)
 	mux.HandleFunc("/notifications/test", handleNotifTest)
+	mux.HandleFunc("/notifications/submit", handleNotifSubmit)
+	mux.HandleFunc("/hooks/status", handleHookStatus)
+	mux.HandleFunc("/hooks/install", handleHookInstall)
+	mux.HandleFunc("/hooks/uninstall", handleHookUninstall)
 
 	// Serve PWA static files (fallback for all other routes)
 	mux.Handle("/", pwaHandler())
@@ -869,6 +880,45 @@ func handleNotifDismissAll(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
+func handleNotifSubmit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if notifWatcher == nil {
+		writeJSONError(w, "Notifications not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20)) // 1MB limit
+	if err != nil {
+		writeJSONError(w, "Failed to read body", http.StatusBadRequest)
+		return
+	}
+
+	// Validate JSON and extract ID
+	var parsed struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		writeJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	id := parsed.ID
+	if id == "" {
+		id = fmt.Sprintf("remote-%d", time.Now().UnixMilli())
+	}
+
+	if err := notifWatcher.SubmitRaw(id, body); err != nil {
+		writeJSONError(w, fmt.Sprintf("Submit failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("Received forwarded notification: %s", id)
+	writeJSON(w, map[string]interface{}{"ok": true, "id": id})
+}
+
 func handleNotifTest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -896,4 +946,46 @@ func handleNotifTest(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Test notification submitted: %s", fields["title"])
 	writeJSON(w, map[string]interface{}{"ok": true, "title": fields["title"]})
+}
+
+func handleHookStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	installed, scriptPath := hooks.Status()
+	writeJSON(w, map[string]interface{}{
+		"installed":  installed,
+		"scriptPath": scriptPath,
+	})
+}
+
+func handleHookInstall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if notifDir == "" {
+		writeJSONError(w, "Notification directory not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := hooks.Install(notifDir); err != nil {
+		writeJSONError(w, fmt.Sprintf("Install failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	log.Printf("Claude Code hook installed")
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func handleHookUninstall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := hooks.Uninstall(); err != nil {
+		writeJSONError(w, fmt.Sprintf("Uninstall failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	log.Printf("Claude Code hook uninstalled")
+	writeJSON(w, map[string]bool{"ok": true})
 }

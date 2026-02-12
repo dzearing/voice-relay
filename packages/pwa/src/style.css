@@ -764,9 +764,11 @@ button, select {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 20px 20px 16px;
+  padding: 20px 20px 14px;
   border-bottom: 1px solid var(--bg-glass-border);
   flex-shrink: 0;
+  position: relative;
+  z-index: 3;
 }
 
 .overlay-header h2 {
@@ -948,6 +950,38 @@ button, select {
   margin-top: 2px;
 }
 
+/* Settings action button (pill-style) */
+.settings-action-btn {
+  padding: 8px 18px;
+  background: var(--accent-cyan-soft);
+  border: 1px solid rgba(0, 212, 255, 0.3);
+  border-radius: 50px;
+  color: var(--accent-cyan);
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.settings-action-btn:active {
+  transform: scale(0.95);
+}
+
+.settings-action-btn.installed {
+  background: var(--success-soft);
+  border-color: rgba(34, 197, 94, 0.3);
+  color: var(--success);
+}
+
+.settings-action-btn.busy {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
 .settings-toggle {
   position: relative;
   width: 50px;
@@ -962,7 +996,7 @@ button, select {
 }
 
 .settings-toggle[aria-checked="true"] {
-  background: var(--accent);
+  background: var(--accent-cyan);
 }
 
 .settings-toggle-knob {
@@ -1104,13 +1138,37 @@ button, select {
 }
 
 .notif-overlay .overlay-content {
-  max-height: 85vh;
+  height: 40vh;
   overflow: visible;
   background: #1a1a28;
 }
 
+/* Cap that extends above the overlay to cover rounded-corner gap
+   and casts shadow onto the details panel behind it. Only visible
+   when the details panel is open. */
+.notif-overlay .overlay-content::before {
+  position: absolute;
+  top: -24px;
+  left: 0;
+  right: 0;
+  height: 48px;
+  background: #1a1a28;
+  border-radius: 24px 24px 0 0;
+  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.6);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.notif-overlay .overlay-content:has(.notif-details-panel.visible)::before {
+  content: '';
+}
+
 .notif-overlay.visible .overlay-content {
   transform: translateY(0);
+}
+
+.notif-overlay .overlay-header {
+  padding: 14px 20px;
 }
 
 .notif-toolbar {
@@ -1177,6 +1235,8 @@ button, select {
   scrollbar-width: none;
   padding: 16px 20px;
   gap: 12px;
+  flex: 1;
+  min-height: 0;
 }
 
 .notif-carousel::-webkit-scrollbar {
@@ -1217,7 +1277,7 @@ button, select {
   flex: 0 0 calc(100% - 40px);
   scroll-snap-align: center;
   background: #242435;
-  border: 1px solid var(--bg-glass-border);
+  border: 1px solid var(--accent-cyan);
   border-radius: 16px;
   padding: 20px;
   padding-top: 16px;
@@ -1225,13 +1285,19 @@ button, select {
   flex-direction: column;
   gap: 10px;
   position: relative;
-  transition: opacity 0.3s ease, transform 0.3s ease;
+  transition: opacity 0.3s ease, transform 0.3s ease, box-shadow 0.6s ease, border-color 0.6s ease;
   min-width: 0;
+  overflow: hidden;
+  box-shadow: inset 0 0 20px rgba(0, 212, 255, 0.15), 0 0 12px rgba(0, 210, 211, 0.1);
 }
 
-.notif-card.active {
-  border-color: var(--accent-cyan);
-  box-shadow: 0 0 12px rgba(0, 210, 211, 0.15);
+.notif-card.played {
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+}
+
+.notif-card.active:not(.played) {
+  box-shadow: inset 0 0 24px rgba(0, 212, 255, 0.2), 0 0 16px rgba(0, 210, 211, 0.15);
 }
 
 .notif-card-close {
@@ -1282,9 +1348,25 @@ button, select {
   font-size: 0.92rem;
   line-height: 1.5;
   color: var(--text-secondary);
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  min-height: 0;
+}
+
+.notif-card-summary::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  background: linear-gradient(to bottom, transparent, #242435);
+  pointer-events: none;
 }
 
 .notif-see-more-btn {
+  flex-shrink: 0;
   width: 100%;
   padding: 10px;
   background: rgba(255, 255, 255, 0.06);
@@ -1304,6 +1386,65 @@ button, select {
   border-color: rgba(0, 210, 211, 0.3);
   color: var(--accent-cyan);
   transform: scale(0.97);
+}
+
+/* ── Notification Details Panel ── */
+.notif-details-panel {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  background: #1a1a28;
+  border-radius: 24px 24px 0 0;
+  border: 1px solid var(--bg-glass-border);
+  border-bottom: none;
+  padding: 20px;
+  padding-top: 16px;
+  padding-bottom: 40px;
+  max-height: 40vh;
+  overflow-y: auto;
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  pointer-events: none;
+  font-size: 0.92rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  z-index: 0;
+}
+
+.notif-details-panel.visible {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.notif-details-close {
+  position: sticky;
+  top: 0;
+  float: right;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin: -4px -4px 8px 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--bg-glass-border);
+  border-radius: 50%;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+  flex-shrink: 0;
+  z-index: 1;
+}
+
+.notif-details-close:active {
+  background: var(--error-soft);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: var(--error);
+  transform: scale(0.92);
 }
 
 /* ── Dot Indicators ── */
@@ -1387,4 +1528,39 @@ button, select {
 
 .notif-count:empty {
   display: none;
+}
+
+/* ── Played notification state ── */
+.notif-card.played {
+  opacity: 0.6;
+}
+
+.notif-card-played-badge {
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ── Replay All card ── */
+.notif-replay-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 1rem;
+  font-weight: 500;
+  opacity: 1;
+}
+
+.notif-replay-card::after {
+  display: none;
+}
+
+.notif-replay-card:active {
+  background: var(--accent-cyan-soft);
+  border-color: rgba(0, 212, 255, 0.3);
+  color: var(--accent-cyan);
 }

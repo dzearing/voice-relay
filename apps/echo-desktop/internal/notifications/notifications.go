@@ -1,10 +1,13 @@
 package notifications
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -44,6 +47,8 @@ type Watcher struct {
 	ttsVoice     func() string // returns current voice name
 	summarize    SummarizeFunc // optional LLM summarization
 	onReady      func()        // called after processing a notification
+	forwardURL   string        // if set, POST raw JSON here instead of processing locally
+	isConnected  func() bool  // returns true when coordinator is reachable (for forward mode)
 	stopCh       chan struct{}
 	mu           sync.Mutex
 }
@@ -62,6 +67,36 @@ func NewWatcher(baseDir string, tts TTSFunc, voiceFn func() string, onReady func
 // SetSummarizeFunc sets the LLM summarization function for raw notifications.
 func (w *Watcher) SetSummarizeFunc(fn SummarizeFunc) {
 	w.summarize = fn
+}
+
+// SetForwardURL configures the watcher to forward raw notifications to a coordinator.
+func (w *Watcher) SetForwardURL(url string) {
+	w.forwardURL = url
+}
+
+// SetConnectedFunc sets the connectivity check for forward mode.
+func (w *Watcher) SetConnectedFunc(fn func() bool) {
+	w.isConnected = fn
+}
+
+// SubmitRaw writes raw JSON bytes into the pending directory (used by coordinator to accept forwarded notifications).
+func (w *Watcher) SubmitRaw(id string, jsonData []byte) error {
+	return os.WriteFile(filepath.Join(w.baseDir, "pending", id+".json"), jsonData, 0644)
+}
+
+// forwardToCoordinator POSTs raw notification JSON to the coordinator.
+func (w *Watcher) forwardToCoordinator(jsonData []byte, filename string) error {
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Post(w.forwardURL, "application/json", bytes.NewReader(jsonData))
+	if err != nil {
+		return fmt.Errorf("POST failed: %w", err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("coordinator returned %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // EnsureDirs creates the notification pipeline directories.
@@ -168,6 +203,22 @@ func (w *Watcher) processPending() {
 		data, err := os.ReadFile(mid)
 		if err != nil {
 			log.Printf("notifications: failed to read %s: %v", e.Name(), err)
+			continue
+		}
+
+		// Forward mode: POST raw JSON to coordinator instead of processing locally
+		if w.forwardURL != "" {
+			if w.isConnected != nil && !w.isConnected() {
+				os.Rename(mid, src) // not connected, move back and wait
+				continue
+			}
+			if err := w.forwardToCoordinator(data, e.Name()); err != nil {
+				log.Printf("notifications: forward failed for %s: %v (will retry)", e.Name(), err)
+				os.Rename(mid, src) // move back to pending for retry
+			} else {
+				os.Remove(mid)
+				log.Printf("notifications: forwarded %s to coordinator", e.Name())
+			}
 			continue
 		}
 

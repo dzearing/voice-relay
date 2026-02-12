@@ -62,6 +62,11 @@ func (c *Client) Close() {
 	}
 }
 
+// IsConnected returns true if the client has an active WebSocket connection.
+func (c *Client) IsConnected() bool {
+	return c.conn != nil
+}
+
 // TriggerReconnect requests an immediate reconnect.
 func (c *Client) TriggerReconnect() {
 	select {

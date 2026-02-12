@@ -32,11 +32,12 @@ import (
 )
 
 var (
-	cfg        *config.Config
-	echoClient *client.Client
-	sttEngine  *stt.Engine
-	llmEngine  *llm.Engine
-	ttsEngine  *tts.Engine
+	cfg            *config.Config
+	echoClient     *client.Client
+	sttEngine      *stt.Engine
+	llmEngine      *llm.Engine
+	ttsEngine      *tts.Engine
+	notifForwarder *notifications.Watcher
 )
 
 var devMode bool
@@ -165,15 +166,35 @@ func onReady() {
 		go initCoordinator()
 	}
 
+	// Client mode: forward notifications to coordinator
+	if !cfg.RunAsCoordinator && cfg.CoordinatorURL != "" {
+		notifDir := filepath.Join(config.Dir(), "notifications")
+		notifForwarder = notifications.NewWatcher(notifDir, nil, nil, nil)
+		coordHTTP := wsToHTTP(cfg.CoordinatorURL)
+		notifForwarder.SetForwardURL(coordHTTP + "/notifications/submit")
+		if err := notifForwarder.EnsureDirs(); err != nil {
+			log.Printf("Failed to create notification dirs: %v", err)
+		} else {
+			go notifForwarder.Start()
+			log.Printf("Notification forwarder ready → %s", coordHTTP)
+		}
+	}
+
 	// Create echo client
 	echoClient = client.New(cfg.Name, cfg.CoordinatorURL, tray.UpdateStatus)
 
+	// Wire connectivity check for notification forwarder
+	if notifForwarder != nil {
+		notifForwarder.SetConnectedFunc(echoClient.IsConnected)
+	}
+
 	// Setup systray menu
+	notifDir := filepath.Join(config.Dir(), "notifications")
 	tray.SetupMenu(cfg, tray.Callbacks{
 		OnReconnect: handleReconnect,
 		OnQuit:      func() { echoClient.Close() },
 		DevMode:     devMode,
-	})
+	}, notifDir)
 
 	// Check for updates in background
 	go updater.CheckForUpdates()
@@ -362,8 +383,9 @@ func initCoordinator() {
 		}
 	}
 
-	// Initialize notification watcher
+	// Initialize notification watcher (and expose dir for hook install)
 	notifDir := filepath.Join(dataDir, "notifications")
+	coordinator.SetNotifDir(notifDir)
 	var notifTTSFunc notifications.TTSFunc
 	if ttsEngine != nil {
 		notifTTSFunc = func(text, voice, language string) ([]byte, error) {
@@ -412,6 +434,9 @@ func initCoordinator() {
 }
 
 func onExit() {
+	if notifForwarder != nil {
+		notifForwarder.Stop()
+	}
 	if echoClient != nil {
 		echoClient.Close()
 	}
@@ -424,6 +449,14 @@ func onExit() {
 	if ttsEngine != nil {
 		ttsEngine.Close()
 	}
+}
+
+// wsToHTTP converts a WebSocket URL to an HTTP URL (ws→http, wss→https, strip /ws suffix).
+func wsToHTTP(wsURL string) string {
+	u := strings.Replace(wsURL, "wss://", "https://", 1)
+	u = strings.Replace(u, "ws://", "http://", 1)
+	u = strings.TrimSuffix(u, "/ws")
+	return u
 }
 
 // killExisting terminates other running VoiceRelay processes (not ourselves).

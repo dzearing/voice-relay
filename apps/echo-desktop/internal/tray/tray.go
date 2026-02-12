@@ -2,6 +2,7 @@ package tray
 
 import (
 	"fmt"
+	"log"
 	"runtime"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/voice-relay/echo-desktop/internal/config"
 	"github.com/voice-relay/echo-desktop/internal/coordinator"
+	"github.com/voice-relay/echo-desktop/internal/hooks"
 	"github.com/voice-relay/echo-desktop/internal/icons"
 	"github.com/voice-relay/echo-desktop/internal/keyboard"
 	"github.com/voice-relay/echo-desktop/internal/updater"
@@ -28,7 +30,7 @@ var (
 )
 
 // SetupMenu initializes the systray menu items.
-func SetupMenu(cfg *config.Config, cb Callbacks) {
+func SetupMenu(cfg *config.Config, cb Callbacks, notifDir string) {
 	systray.SetTemplateIcon(icons.TemplateIconDisconnected(), icons.IconDisconnected())
 	systray.SetTitle("")
 	systray.SetTooltip("Voice Relay")
@@ -81,6 +83,14 @@ func SetupMenu(cfg *config.Config, cb Callbacks) {
 
 	systray.AddSeparator()
 
+	// Claude Code hook toggle
+	hookInstalled, _ := hooks.Status()
+	hookLabel := "Install Claude Code Hook"
+	if hookInstalled {
+		hookLabel = "Uninstall Claude Code Hook"
+	}
+	mHook := systray.AddMenuItem(hookLabel, "Toggle Claude Code notification hook")
+
 	mConfig := systray.AddMenuItem("Open Config...", "Open configuration file")
 	mUpdate := systray.AddMenuItem("Check for Updates", "Check for new version")
 
@@ -113,6 +123,22 @@ func SetupMenu(cfg *config.Config, cb Callbacks) {
 			case <-mConnect.ClickedCh:
 				if cb.OnReconnect != nil {
 					cb.OnReconnect()
+				}
+			case <-mHook.ClickedCh:
+				if hookInstalled {
+					if err := hooks.Uninstall(); err != nil {
+						log.Printf("Hook uninstall error: %v", err)
+					} else {
+						hookInstalled = false
+						mHook.SetTitle("Install Claude Code Hook")
+					}
+				} else {
+					if err := hooks.Install(notifDir); err != nil {
+						log.Printf("Hook install error: %v", err)
+					} else {
+						hookInstalled = true
+						mHook.SetTitle("Uninstall Claude Code Hook")
+					}
 				}
 			case <-mConfig.ClickedCh:
 				cfg.Save()
