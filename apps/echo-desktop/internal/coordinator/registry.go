@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,12 +15,14 @@ type echoService struct {
 	Name        string    `json:"name"`
 	Conn        *websocket.Conn `json:"-"`
 	ConnectedAt time.Time `json:"connectedAt"`
+	Session     int       `json:"session,omitempty"`
 }
 
 type registry struct {
-	mu        sync.RWMutex
-	services  map[string]*echoService
-	observers map[*websocket.Conn]string // value = sessionId
+	mu          sync.RWMutex
+	services    map[string]*echoService
+	observers   map[*websocket.Conn]string // value = sessionId
+	nextSession int                         // monotonic counter for claude sessions
 }
 
 func newRegistry() *registry {
@@ -29,23 +32,39 @@ func newRegistry() *registry {
 	}
 }
 
-func (r *registry) register(name string, conn *websocket.Conn) {
+func (r *registry) register(name string, conn *websocket.Conn) int {
 	r.mu.Lock()
 
-	// Close existing connection if any
+	// Close existing connection if any; preserve session number
+	existingSession := 0
 	if existing, ok := r.services[name]; ok {
+		existingSession = existing.Session
 		existing.Conn.Close()
 	}
 
-	r.services[name] = &echoService{
+	svc := &echoService{
 		Name:        name,
 		Conn:        conn,
 		ConnectedAt: time.Now(),
 	}
-	log.Printf("Echo service registered: %s", name)
+
+	// Assign session number to claude instances (reuse on re-registration)
+	if strings.Contains(name, "-claude") {
+		if existingSession > 0 {
+			svc.Session = existingSession
+		} else {
+			r.nextSession++
+			svc.Session = r.nextSession
+		}
+	}
+
+	r.services[name] = svc
+	sessionNum := svc.Session
+	log.Printf("Echo service registered: %s (session=%d)", name, sessionNum)
 	r.mu.Unlock()
 
 	r.broadcastMachines()
+	return sessionNum
 }
 
 func (r *registry) unregister(conn *websocket.Conn) {

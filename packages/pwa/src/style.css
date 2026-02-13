@@ -1159,7 +1159,7 @@ button, select {
   pointer-events: none;
 }
 
-.notif-overlay .overlay-content:has(.notif-details-panel.visible)::before {
+.notif-overlay .overlay-content:has(.notif-slide-panel.visible)::before {
   content: '';
 }
 
@@ -1300,10 +1300,16 @@ button, select {
   box-shadow: inset 0 0 24px rgba(0, 212, 255, 0.2), 0 0 16px rgba(0, 210, 211, 0.15);
 }
 
-.notif-card-close {
+.notif-card-actions {
   position: absolute;
   top: 10px;
   right: 10px;
+  display: flex;
+  gap: 6px;
+  z-index: 1;
+}
+
+.notif-card-close {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1316,7 +1322,6 @@ button, select {
   cursor: pointer;
   transition: all var(--transition-fast);
   -webkit-tap-highlight-color: transparent;
-  z-index: 1;
 }
 
 .notif-card-close:active {
@@ -1326,6 +1331,31 @@ button, select {
   transform: scale(0.92);
 }
 
+.notif-reply-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 12px;
+  background: rgba(139, 92, 246, 0.1);
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  border-radius: 50px;
+  color: #a78bfa;
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+  white-space: nowrap;
+}
+
+.notif-reply-btn:active {
+  background: rgba(139, 92, 246, 0.25);
+  border-color: rgba(139, 92, 246, 0.5);
+  transform: scale(0.95);
+}
+
 .notif-card-source {
   font-size: 0.7rem;
   font-weight: 500;
@@ -1333,7 +1363,7 @@ button, select {
   letter-spacing: 0.06em;
   color: var(--accent-cyan);
   opacity: 0.8;
-  padding-right: 40px;
+  padding-right: 76px;
 }
 
 .notif-card-title {
@@ -1341,7 +1371,7 @@ button, select {
   font-weight: 600;
   color: var(--text-primary);
   line-height: 1.3;
-  padding-right: 40px;
+  padding-right: 76px;
 }
 
 .notif-card-summary {
@@ -1388,10 +1418,10 @@ button, select {
   transform: scale(0.97);
 }
 
-/* ── Notification Details Panel ── */
-.notif-details-panel {
+/* ── Shared slide-up panel base ── */
+.notif-slide-panel {
   position: absolute;
-  bottom: 100%;
+  bottom: calc(100% - 20px);
   left: 0;
   right: 0;
   background: #1a1a28;
@@ -1400,35 +1430,28 @@ button, select {
   border-bottom: none;
   padding: 20px;
   padding-top: 16px;
-  padding-bottom: 40px;
-  max-height: 40vh;
+  padding-bottom: 60px; /* extra to compensate for tucking behind overlay */
   overflow-y: auto;
   opacity: 0;
   transform: translateY(20px);
   transition: opacity 0.3s ease, transform 0.3s ease;
   pointer-events: none;
-  font-size: 0.92rem;
-  line-height: 1.6;
-  color: var(--text-secondary);
   z-index: 0;
 }
 
-.notif-details-panel.visible {
+.notif-slide-panel.visible {
   opacity: 1;
   transform: translateY(0);
   pointer-events: auto;
 }
 
-.notif-details-close {
-  position: sticky;
-  top: 0;
-  float: right;
+.notif-slide-panel-close {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 32px;
   height: 32px;
-  margin: -4px -4px 8px 12px;
+  flex-shrink: 0;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid var(--bg-glass-border);
   border-radius: 50%;
@@ -1436,15 +1459,29 @@ button, select {
   cursor: pointer;
   transition: all var(--transition-fast);
   -webkit-tap-highlight-color: transparent;
-  flex-shrink: 0;
-  z-index: 1;
 }
 
-.notif-details-close:active {
+.notif-slide-panel-close:active {
   background: var(--error-soft);
   border-color: rgba(239, 68, 68, 0.3);
   color: var(--error);
   transform: scale(0.92);
+}
+
+/* ── Details Panel (extends slide-up) ── */
+.notif-details-panel {
+  max-height: 40vh;
+  font-size: 0.92rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.notif-details-panel .notif-slide-panel-close {
+  position: sticky;
+  top: 0;
+  float: right;
+  margin: -4px -4px 8px 12px;
+  z-index: 1;
 }
 
 /* ── Dot Indicators ── */
@@ -1563,4 +1600,140 @@ button, select {
   background: var(--accent-cyan-soft);
   border-color: rgba(0, 212, 255, 0.3);
   color: var(--accent-cyan);
+}
+
+/* ── Play/Pause Button ── */
+.notif-play-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: var(--bg-glass);
+  border: 1px solid var(--bg-glass-border);
+  border-radius: 50%;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.notif-play-btn:active {
+  transform: scale(0.92);
+}
+
+.notif-play-btn .icon-pause {
+  display: none;
+}
+
+.notif-play-btn.playing {
+  background: var(--accent-cyan-soft);
+  border-color: rgba(0, 212, 255, 0.3);
+  color: var(--accent-cyan);
+}
+
+.notif-play-btn.playing .icon-play {
+  display: none;
+}
+
+.notif-play-btn.playing .icon-pause {
+  display: block;
+}
+
+/* ── Reply Panel (extends slide-up) ── */
+.notif-reply-panel {
+  max-height: 55vh;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.notif-reply-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.notif-reply-header-text {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  line-height: 1.4;
+}
+
+.notif-reply-header-text span {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.notif-reply-panel textarea {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--bg-glass-border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-family: var(--font-family);
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  resize: none;
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+
+.notif-reply-panel textarea::placeholder {
+  color: var(--text-tertiary);
+}
+
+.notif-reply-panel textarea:focus {
+  border-color: rgba(139, 92, 246, 0.5);
+}
+
+.notif-reply-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.notif-reply-cancel-btn {
+  padding: 10px 18px;
+  background: var(--bg-glass);
+  border: 1px solid var(--bg-glass-border);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.notif-reply-cancel-btn:active {
+  transform: scale(0.97);
+}
+
+.notif-reply-send-btn {
+  padding: 10px 24px;
+  background: rgba(139, 92, 246, 0.2);
+  border: 1px solid rgba(139, 92, 246, 0.4);
+  border-radius: 10px;
+  color: #a78bfa;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.notif-reply-send-btn:active {
+  background: rgba(139, 92, 246, 0.35);
+  transform: scale(0.97);
+}
+
+.notif-reply-send-btn:disabled {
+  opacity: 0.4;
+  pointer-events: none;
 }

@@ -421,7 +421,13 @@ if ($lastUserText.Length -gt 1000) { $lastUserText = $lastUserText.Substring(0, 
 $ts = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 $id = "claude-$ts"
 
-$notif = @{
+$repo = ""; $branch = ""
+try {
+    $repo = (git rev-parse --show-toplevel 2>$null | Split-Path -Leaf)
+    $branch = (git branch --show-current 2>$null)
+} catch {}
+
+$notifObj = @{
     id                 = $id
     title              = ""
     summary            = ""
@@ -430,7 +436,12 @@ $notif = @{
     priority           = "normal"
     source             = "claude-code"
     created_at         = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-} | ConvertTo-Json -Compress
+}
+if ($repo) { $notifObj["repo"] = $repo }
+if ($branch) { $notifObj["branch"] = $branch }
+if ($env:CC_SESSION) { $notifObj["session"] = $env:CC_SESSION }
+if ($env:CC_WRAPPER_NAME) { $notifObj["reply_target"] = $env:CC_WRAPPER_NAME }
+$notif = $notifObj | ConvertTo-Json -Compress
 
 $pendingDir = Join-Path $notifDir "pending"
 $tmpDir = Join-Path $notifDir "tmp"
@@ -552,7 +563,16 @@ nid = f'claude-{ts}'
 from datetime import datetime, timezone
 now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
-notif = json.dumps({
+import subprocess
+repo = ''
+branch = ''
+try:
+    repo = os.path.basename(subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], stderr=subprocess.DEVNULL).decode().strip())
+    branch = subprocess.check_output(['git', 'branch', '--show-current'], stderr=subprocess.DEVNULL).decode().strip()
+except Exception:
+    pass
+
+notif_obj = {
     'id': nid,
     'title': '',
     'summary': '',
@@ -561,7 +581,18 @@ notif = json.dumps({
     'priority': 'normal',
     'source': 'claude-code',
     'created_at': now,
-}, ensure_ascii=False)
+}
+if repo:
+    notif_obj['repo'] = repo
+if branch:
+    notif_obj['branch'] = branch
+cc_session = os.environ.get('CC_SESSION')
+if cc_session:
+    notif_obj['session'] = cc_session
+cc_wrapper = os.environ.get('CC_WRAPPER_NAME')
+if cc_wrapper:
+    notif_obj['reply_target'] = cc_wrapper
+notif = json.dumps(notif_obj, ensure_ascii=False)
 
 print('OK')
 print(nid)

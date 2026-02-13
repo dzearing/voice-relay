@@ -288,6 +288,13 @@ function updateMachineList(machines: { name: string }[]) {
   }
 
   updateActionSummary();
+
+  // Track cc-wrapper connectivity for card reply buttons
+  const wasConnected = ccWrapperConnected;
+  ccWrapperConnected = Array.from(machineSelect.options).some(o => o.value.includes("-claude"));
+  if (wasConnected !== ccWrapperConnected && isNotifOverlayOpen()) {
+    renderNotifCards();
+  }
 }
 
 // WebSocket observer for live machine list updates
@@ -1024,6 +1031,8 @@ const notifAutoplayBtn = document.getElementById("notif-autoplay-btn") as HTMLBu
 const notifCountChip = document.getElementById("notif-count-chip") as HTMLSpanElement;
 const notifBtn = document.getElementById("notif-btn") as HTMLButtonElement;
 const notifCountEl = document.getElementById("notif-count") as HTMLSpanElement;
+const notifReplyPanel = document.getElementById("notif-reply-panel") as HTMLDivElement;
+const notifPlayBtn = document.getElementById("notif-play-btn") as HTMLButtonElement;
 
 interface NotificationItem {
   id: string;
@@ -1032,6 +1041,10 @@ interface NotificationItem {
   details?: string;
   priority?: string;
   source?: string;
+  repo?: string;
+  branch?: string;
+  session?: string;
+  reply_target?: string;
   created_at?: string;
   processed_at?: string;
   title_audio?: string;
@@ -1042,6 +1055,7 @@ interface NotificationItem {
 let notifItems: NotificationItem[] = [];
 let knownNotifIds: Set<string> = new Set();
 let notifIndex = 0;
+let ccWrapperConnected = false;
 
 // iOS Safari: single Audio element unlocked during user gesture
 let notifAudioEl: HTMLAudioElement | null = null;
@@ -1123,6 +1137,20 @@ function isNotifOverlayOpen() {
   return notifOverlay.classList.contains("visible");
 }
 
+function formatNotifSource(n: NotificationItem): string {
+  let label = "";
+  if (n.repo) {
+    label = n.repo;
+    if (n.branch) label += ` \u00B7 ${n.branch}`;
+  } else if (n.source) {
+    label = n.source.toUpperCase();
+  }
+  if (n.session) {
+    label += (label ? " \u00B7 " : "") + `#${n.session}`;
+  }
+  return label;
+}
+
 // ── Overlay open/close ──
 
 function openNotifOverlay() {
@@ -1141,11 +1169,6 @@ function openNotifOverlay() {
 
   renderNotifCards();
   scrollToCard(notifIndex, "auto");
-
-  // Auto-play only if starting card is unplayed
-  if (autoplayNewNotifs && firstUnplayed >= 0) {
-    playNotifAudio(firstUnplayed);
-  }
 }
 
 const ICON_CLOSE_SM = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`;
@@ -1155,48 +1178,50 @@ function hideDetailsPanel() {
   stopNotifAudio();
 }
 
-function showDetailsPanel(text: string) {
-  notifDetailsPanel.innerHTML = `<button class="notif-details-close" aria-label="Close">${ICON_CLOSE_SM}</button>${escapeHtml(text)}`;
-  notifDetailsPanel.classList.add("visible");
-
-  // Close button
-  notifDetailsPanel.querySelector(".notif-details-close")!.addEventListener("click", hideDetailsPanel);
-
-  // Swipe-down to dismiss
+/** Attach swipe-down-to-dismiss on a slide panel element. */
+function setupPanelSwipeDismiss(panel: HTMLElement, onDismiss: () => void) {
   let startY = 0;
   let dragging = false;
 
-  notifDetailsPanel.addEventListener("touchstart", (e: TouchEvent) => {
-    // Only start drag if at scroll top
-    if (notifDetailsPanel.scrollTop <= 0) {
+  panel.addEventListener("touchstart", (e: TouchEvent) => {
+    if (panel.scrollTop <= 0) {
       startY = e.touches[0].clientY;
       dragging = true;
     }
   }, { passive: true });
 
-  notifDetailsPanel.addEventListener("touchmove", (e: TouchEvent) => {
+  panel.addEventListener("touchmove", (e: TouchEvent) => {
     if (!dragging) return;
     const dy = e.touches[0].clientY - startY;
     if (dy > 0) {
-      notifDetailsPanel.style.transform = `translateY(${dy}px)`;
-      notifDetailsPanel.style.opacity = String(Math.max(0, 1 - dy / 200));
+      panel.style.transform = `translateY(${dy}px)`;
+      panel.style.opacity = String(Math.max(0, 1 - dy / 200));
     }
   }, { passive: true });
 
-  notifDetailsPanel.addEventListener("touchend", (e: TouchEvent) => {
+  panel.addEventListener("touchend", (e: TouchEvent) => {
     if (!dragging) return;
     dragging = false;
     const dy = e.changedTouches[0].clientY - startY;
     if (dy > 60) {
-      hideDetailsPanel();
+      onDismiss();
     }
-    notifDetailsPanel.style.transform = "";
-    notifDetailsPanel.style.opacity = "";
+    panel.style.transform = "";
+    panel.style.opacity = "";
   });
+}
+
+function showDetailsPanel(text: string) {
+  notifDetailsPanel.innerHTML = `<button class="notif-slide-panel-close" aria-label="Close">${ICON_CLOSE_SM}</button>${escapeHtml(text)}`;
+  notifDetailsPanel.classList.add("visible");
+
+  notifDetailsPanel.querySelector(".notif-slide-panel-close")!.addEventListener("click", hideDetailsPanel);
+  setupPanelSwipeDismiss(notifDetailsPanel, hideDetailsPanel);
 }
 
 function closeNotifOverlay() {
   hideDetailsPanel();
+  closeReplyPanel();
   notifOverlay.classList.remove("visible");
   document.body.style.overflow = "";
   stopNotifAudio();
@@ -1216,6 +1241,7 @@ function closeNotifOverlay() {
 // ── Card rendering ──
 
 const ICON_DISMISS = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`;
+const ICON_REPLY = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>`;
 
 function renderNotifCards() {
   if (notifItems.length === 0) {
@@ -1229,9 +1255,12 @@ function renderNotifCards() {
     const hasDetails = !!(n.details && n.details_audio);
     const played = isPlayed(n.id);
     return `<div class="notif-card${i === notifIndex ? " active" : ""}${played ? " played" : ""}" data-index="${i}" data-id="${n.id}">
-      <button class="notif-card-close" data-id="${n.id}" aria-label="Dismiss">${ICON_DISMISS}</button>
+      <div class="notif-card-actions">
+        ${n.source === "claude-code" && ccWrapperConnected ? `<button class="notif-reply-btn" data-index="${i}" aria-label="Reply">${ICON_REPLY} Reply</button>` : ""}
+        <button class="notif-card-close" data-id="${n.id}" aria-label="Dismiss">${ICON_DISMISS}</button>
+      </div>
       ${played ? `<div class="notif-card-played-badge">Played</div>` : ""}
-      ${n.source ? `<div class="notif-card-source">${escapeHtml(n.source)}</div>` : ""}
+      ${formatNotifSource(n) ? `<div class="notif-card-source">${escapeHtml(formatNotifSource(n))}</div>` : ""}
       <div class="notif-card-title">${escapeHtml(n.title)}</div>
       <div class="notif-card-summary">${escapeHtml(n.summary)}</div>
       ${hasDetails ? `<button class="notif-see-more-btn" data-index="${i}">See more</button>` : ""}
@@ -1262,6 +1291,7 @@ function renderNotifCards() {
       const item = notifItems[idx];
       if (!item) return;
       // Show details text in panel
+      closeReplyPanel(); // close reply drawer if open
       if (item.details) {
         showDetailsPanel(item.details);
       }
@@ -1271,6 +1301,15 @@ function renderNotifCards() {
         stopAutoplay();
         playDetailsAudio(idx);
       }
+    });
+  });
+
+  // Reply buttons (claude-code cards when wrapper is connected)
+  notifCarousel.querySelectorAll(".notif-reply-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const idx = parseInt((btn as HTMLElement).dataset.index!, 10);
+      const item = notifItems[idx];
+      if (item) openReplyPanel(item.summary, item.reply_target);
     });
   });
 
@@ -1447,12 +1486,9 @@ function setupCarouselScroll() {
       updateNotifDots();
       updateActiveCard();
       hideDetailsPanel();
-      // User swiped — stop current audio, play new card
+      // User swiped — stop current audio, don't auto-play next
       stopNotifAudio();
       stopAutoplay();
-      if (closest < notifItems.length) {
-        playNotifAudio(closest);
-      }
     }
   };
 
@@ -1568,6 +1604,7 @@ function stopNotifAudio() {
 
 function scheduleAutoAdvance() {
   stopAutoplay();
+  if (!autoplayNewNotifs) return;
   if (!isNotifOverlayOpen()) return;
   notifAutoplayTimer = setTimeout(() => {
     notifAutoplayTimer = null;
@@ -1598,10 +1635,17 @@ function stopAutoplay() {
   }
 }
 
+// ── Play/pause button ──
+
+function updatePlayBtn() {
+  notifPlayBtn.classList.toggle("playing", notifPlaying);
+}
+
 // ── State updates ──
 
 function updateNotifBtnState() {
   const unplayedCount = notifItems.filter(n => !isPlayed(n.id)).length;
+  updatePlayBtn();
   notifBtn.classList.toggle("has-notifs", unplayedCount > 0 && !notifPlaying);
   notifBtn.classList.toggle("playing", notifPlaying);
   notifCountEl.textContent = unplayedCount > 0 ? String(unplayedCount) : "";
@@ -1710,6 +1754,91 @@ async function dismissAllNotifications() {
   updateNotifCount();
 }
 
+// ── Claude Code Reply ──
+
+function openReplyPanel(summary: string, replyTarget?: string) {
+  hideDetailsPanel(); // close details if open
+  notifReplyPanel.innerHTML = `
+    <div class="notif-reply-header">
+      <div class="notif-reply-header-text">Reply to: <span>${escapeHtml(summary)}</span></div>
+      <button class="notif-slide-panel-close" aria-label="Close">${ICON_CLOSE_SM}</button>
+    </div>
+    <textarea id="notif-reply-input" placeholder="Type your reply..." rows="3"></textarea>
+    <div class="notif-reply-actions">
+      <button id="notif-reply-cancel-btn" class="notif-reply-cancel-btn">Cancel</button>
+      <button id="notif-reply-send-btn" class="notif-reply-send-btn">Send</button>
+    </div>`;
+  notifReplyPanel.classList.add("visible");
+
+  const input = document.getElementById("notif-reply-input") as HTMLTextAreaElement;
+  const sendBtn = document.getElementById("notif-reply-send-btn") as HTMLButtonElement;
+  const cancelBtn = document.getElementById("notif-reply-cancel-btn") as HTMLButtonElement;
+
+  input.focus();
+
+  sendBtn.addEventListener("click", () => sendCCReply(input, sendBtn, replyTarget));
+  cancelBtn.addEventListener("click", closeReplyPanel);
+  notifReplyPanel.querySelector(".notif-slide-panel-close")!.addEventListener("click", closeReplyPanel);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendCCReply(input, sendBtn, replyTarget);
+    }
+  });
+
+  setupPanelSwipeDismiss(notifReplyPanel, closeReplyPanel);
+}
+
+function closeReplyPanel() {
+  notifReplyPanel.classList.remove("visible");
+}
+
+async function sendCCReply(input: HTMLTextAreaElement, sendBtn: HTMLButtonElement, replyTarget?: string) {
+  const text = input.value.trim();
+  if (!text) return;
+
+  // Use the notification's reply_target if available, otherwise fall back to machine dropdown
+  let ccTarget = replyTarget || "";
+  if (!ccTarget) {
+    const target = machineSelect.value;
+    if (target && target.includes("-claude")) {
+      ccTarget = target;
+    } else {
+      const opt = Array.from(machineSelect.options).find((o) => o.value.includes("-claude"));
+      if (!opt) {
+        setStatus("cc-wrapper not connected", "error");
+        setTimeout(hideStatus, 3000);
+        return;
+      }
+      ccTarget = opt.value;
+    }
+  }
+
+  sendBtn.disabled = true;
+  try {
+    const sendResp = await fetch(`${API_BASE}/send-text`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target: ccTarget, text }),
+    });
+
+    if (sendResp.ok) {
+      closeReplyPanel();
+      setStatus("Reply sent!", "success");
+      setTimeout(hideStatus, 2000);
+    } else {
+      const result = await sendResp.json();
+      setStatus(result.error || "Failed to send reply", "error");
+      setTimeout(hideStatus, 3000);
+    }
+  } catch {
+    setStatus("Network error", "error");
+    setTimeout(hideStatus, 3000);
+  } finally {
+    sendBtn.disabled = false;
+  }
+}
+
 // ── Event listeners ──
 
 notifBtn.addEventListener("click", () => {
@@ -1723,7 +1852,17 @@ notifBtn.addEventListener("click", () => {
 notifOverlay.querySelector(".overlay-backdrop")?.addEventListener("click", closeNotifOverlay);
 notifDismissAllBtn.addEventListener("click", dismissAllNotifications);
 
-// Autoplay toggle button in overlay header
+// Play/pause button — plays or stops audio for current card
+notifPlayBtn.addEventListener("click", () => {
+  if (notifPlaying) {
+    stopNotifAudio();
+    stopAutoplay();
+  } else if (notifIndex < notifItems.length) {
+    playNotifAudio(notifIndex);
+  }
+});
+
+// Auto-iterate toggle — when on, advances to next card after audio finishes
 function updateAutoplayBtn() {
   notifAutoplayBtn.classList.toggle("active", autoplayNewNotifs);
 }

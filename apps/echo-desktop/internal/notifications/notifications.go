@@ -24,6 +24,10 @@ type Notification struct {
 	Details      string `json:"details,omitempty"`
 	Priority     string `json:"priority,omitempty"`
 	Source       string `json:"source,omitempty"`
+	Repo         string `json:"repo,omitempty"`
+	Branch       string `json:"branch,omitempty"`
+	Session      string `json:"session,omitempty"`
+	ReplyTarget  string `json:"reply_target,omitempty"`
 	CreatedAt    string `json:"created_at,omitempty"`
 	ProcessedAt  string `json:"processed_at,omitempty"`
 	TitleAudio   string `json:"title_audio,omitempty"`

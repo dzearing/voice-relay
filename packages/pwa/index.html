@@ -200,12 +200,16 @@
     <div id="notif-overlay" class="notif-overlay">
       <div class="overlay-backdrop"></div>
       <div class="overlay-content">
-        <div id="notif-details-panel" class="notif-details-panel"></div>
+        <div id="notif-details-panel" class="notif-slide-panel notif-details-panel"></div>
         <div class="overlay-header">
           <h2>Notifications <span id="notif-count-chip" class="notif-count-chip"></span></h2>
           <div class="notif-toolbar">
-            <button id="notif-autoplay-btn" class="notif-autoplay-btn" aria-label="Auto-play">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            <button id="notif-play-btn" class="notif-play-btn" aria-label="Play">
+              <svg class="icon-play" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              <svg class="icon-pause" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+            </button>
+            <button id="notif-autoplay-btn" class="notif-autoplay-btn" aria-label="Auto-iterate">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
               Auto
             </button>
             <button id="notif-dismiss-all-btn" class="notif-dismiss-all-btn">Clear All</button>
@@ -213,6 +217,7 @@
         </div>
         <div id="notif-carousel" class="notif-carousel"></div>
         <div id="notif-dots" class="notif-dots"></div>
+        <div id="notif-reply-panel" class="notif-slide-panel notif-reply-panel"></div>
       </div>
     </div>
 

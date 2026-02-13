@@ -600,10 +600,11 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if msg.Type == "register" && msg.Name != "" {
-				reg.register(msg.Name, conn)
-				resp, _ := json.Marshal(map[string]string{
-					"type": "registered",
-					"name": msg.Name,
+				sessionNum := reg.register(msg.Name, conn)
+				resp, _ := json.Marshal(map[string]interface{}{
+					"type":    "registered",
+					"name":    msg.Name,
+					"session": sessionNum,
 				})
 				conn.WriteMessage(websocket.TextMessage, resp)
 			} else if msg.Type == "observe" {
