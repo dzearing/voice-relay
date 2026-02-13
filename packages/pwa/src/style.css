@@ -1122,6 +1122,167 @@ button, select {
   animation: spin 1s linear infinite;
 }
 
+/* ── Question Overlay (AskUserQuestion interception) ── */
+.question-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-medium);
+}
+
+.question-overlay.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.question-overlay .overlay-content {
+  max-height: 85vh;
+}
+
+.question-overlay.visible .overlay-content {
+  transform: translateY(0);
+}
+
+.question-body {
+  padding: 20px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.question-item {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.question-header-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  background: var(--accent-cyan-soft);
+  border: 1px solid rgba(0, 212, 255, 0.3);
+  border-radius: 6px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent-cyan);
+  align-self: flex-start;
+}
+
+.question-text {
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.question-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.question-option-btn {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--bg-glass-border);
+  border-radius: 12px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.92rem;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.question-option-btn:active {
+  transform: scale(0.98);
+  background: var(--accent-cyan-soft);
+  border-color: rgba(0, 212, 255, 0.4);
+}
+
+.question-option-btn.selected {
+  background: var(--accent-cyan-soft);
+  border-color: rgba(0, 212, 255, 0.5);
+  box-shadow: 0 0 12px rgba(0, 212, 255, 0.15);
+}
+
+.question-option-desc {
+  font-size: 0.78rem;
+  font-weight: 400;
+  color: var(--text-tertiary);
+  line-height: 1.4;
+}
+
+.question-other-row {
+  display: flex;
+  gap: 8px;
+}
+
+.question-other-input {
+  flex: 1;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--bg-glass-border);
+  border-radius: 10px;
+  font-family: var(--font-family);
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+
+.question-other-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.question-other-input:focus {
+  border-color: rgba(0, 212, 255, 0.5);
+}
+
+.question-other-send {
+  padding: 12px 20px;
+  background: var(--accent-cyan-soft);
+  border: 1px solid rgba(0, 212, 255, 0.4);
+  border-radius: 10px;
+  color: var(--accent-cyan);
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+  white-space: nowrap;
+}
+
+.question-other-send:active {
+  transform: scale(0.97);
+  background: rgba(0, 212, 255, 0.3);
+}
+
+.question-other-send:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+/* Question indicator dot on the notification bell */
+.notif-btn.has-question {
+  color: #fbbf24;
+  animation: bell-glow 1.5s ease-in-out infinite;
+}
+
 /* ── Notification Overlay ── */
 .notif-overlay {
   position: fixed;

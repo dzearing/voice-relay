@@ -38,7 +38,39 @@ var (
 
 	interimCache   map[string]string // phrase → base64 WAV
 	interimCacheMu sync.RWMutex
+
+	// pendingQuestions tracks AskUserQuestion prompts from Claude Code hooks,
+	// keyed by question ID.
+	pendingQuestions   map[string]*PendingQuestion
+	pendingQuestionsMu sync.RWMutex
 )
+
+// PendingQuestion represents an AskUserQuestion intercepted by a PreToolUse hook.
+type PendingQuestion struct {
+	ID          string              `json:"id"`
+	ReplyTarget string              `json:"reply_target"`
+	Questions   []QuestionItem      `json:"questions"`
+	CreatedAt   string              `json:"created_at"`
+	Answered    bool                `json:"answered"`
+}
+
+// QuestionItem mirrors Claude Code's AskUserQuestion schema.
+type QuestionItem struct {
+	Question    string         `json:"question"`
+	Header      string         `json:"header"`
+	Options     []QuestionOpt  `json:"options"`
+	MultiSelect bool           `json:"multiSelect"`
+}
+
+// QuestionOpt is a single option in an AskUserQuestion.
+type QuestionOpt struct {
+	Label       string `json:"label"`
+	Description string `json:"description"`
+}
+
+func init() {
+	pendingQuestions = make(map[string]*PendingQuestion)
+}
 
 var (
 	shortURL      string
@@ -224,6 +256,9 @@ func Start(port int) error {
 	mux.HandleFunc("/hooks/status", handleHookStatus)
 	mux.HandleFunc("/hooks/install", handleHookInstall)
 	mux.HandleFunc("/hooks/uninstall", handleHookUninstall)
+	mux.HandleFunc("/hooks/question", handleHookQuestion)
+	mux.HandleFunc("/question/answer", handleQuestionAnswer)
+	mux.HandleFunc("/questions", handleListQuestions)
 
 	// Serve PWA static files (fallback for all other routes)
 	mux.Handle("/", pwaHandler())
@@ -947,6 +982,136 @@ func handleNotifTest(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Test notification submitted: %s", fields["title"])
 	writeJSON(w, map[string]interface{}{"ok": true, "title": fields["title"]})
+}
+
+// handleHookQuestion receives an AskUserQuestion from a PreToolUse hook script.
+// It stores the question and broadcasts it to all PWA observers.
+func handleHookQuestion(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		ID          string         `json:"id"`
+		ReplyTarget string         `json:"reply_target"`
+		Questions   []QuestionItem `json:"questions"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if body.ID == "" {
+		body.ID = fmt.Sprintf("q-%d", time.Now().UnixMilli())
+	}
+
+	pq := &PendingQuestion{
+		ID:          body.ID,
+		ReplyTarget: body.ReplyTarget,
+		Questions:   body.Questions,
+		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+	}
+
+	pendingQuestionsMu.Lock()
+	pendingQuestions[pq.ID] = pq
+	pendingQuestionsMu.Unlock()
+
+	log.Printf("Question received: %s (target=%s, %d questions)", pq.ID, pq.ReplyTarget, len(pq.Questions))
+
+	// Broadcast to all PWA observers
+	if reg != nil {
+		reg.broadcastEvent(map[string]interface{}{
+			"type":     "question",
+			"question": pq,
+		})
+	}
+
+	writeJSON(w, map[string]interface{}{"ok": true, "id": pq.ID})
+}
+
+// handleQuestionAnswer receives an answer from the PWA and routes it to the cc-wrapper.
+func handleQuestionAnswer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		QuestionID string `json:"question_id"`
+		Index      int    `json:"index"`      // option index to select
+		OtherText  string `json:"other_text"`  // if "Other" was chosen
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	pendingQuestionsMu.Lock()
+	pq, ok := pendingQuestions[body.QuestionID]
+	if ok {
+		pq.Answered = true
+	}
+	pendingQuestionsMu.Unlock()
+
+	if !ok {
+		writeJSONError(w, "Question not found", http.StatusNotFound)
+		return
+	}
+
+	// Send the selection to the cc-wrapper via registry
+	if pq.ReplyTarget == "" {
+		writeJSONError(w, "No reply target for this question", http.StatusBadRequest)
+		return
+	}
+
+	if !reg.sendSelect(pq.ReplyTarget, body.Index, body.OtherText) {
+		writeJSONError(w, fmt.Sprintf("Target '%s' not connected", pq.ReplyTarget), http.StatusNotFound)
+		return
+	}
+
+	log.Printf("Question %s answered: index=%d other=%q -> %s", body.QuestionID, body.Index, body.OtherText, pq.ReplyTarget)
+
+	// Broadcast dismissal so PWA removes the question card
+	if reg != nil {
+		reg.broadcastEvent(map[string]interface{}{
+			"type":        "question_answered",
+			"question_id": body.QuestionID,
+		})
+	}
+
+	// Clean up after a short delay (keep it around briefly for late observers)
+	go func() {
+		time.Sleep(5 * time.Second)
+		pendingQuestionsMu.Lock()
+		delete(pendingQuestions, body.QuestionID)
+		pendingQuestionsMu.Unlock()
+	}()
+
+	writeJSON(w, map[string]interface{}{"ok": true})
+}
+
+// handleListQuestions returns all pending (unanswered) questions.
+func handleListQuestions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	pendingQuestionsMu.RLock()
+	var result []*PendingQuestion
+	for _, pq := range pendingQuestions {
+		if !pq.Answered {
+			result = append(result, pq)
+		}
+	}
+	pendingQuestionsMu.RUnlock()
+
+	if result == nil {
+		result = []*PendingQuestion{}
+	}
+
+	writeJSON(w, result)
 }
 
 func handleHookStatus(w http.ResponseWriter, r *http.Request) {

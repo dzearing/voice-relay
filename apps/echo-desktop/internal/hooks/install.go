@@ -19,9 +19,22 @@ func scriptBasename() string {
 	return "notify-done.sh"
 }
 
+// askScriptBasename returns the ask-intercept hook script filename for the current OS.
+func askScriptBasename() string {
+	if runtime.GOOS == "windows" {
+		return "ask-intercept.ps1"
+	}
+	return "ask-intercept.sh"
+}
+
 // scriptPath returns the full path to the hook script.
 func scriptPath() string {
 	return filepath.Join(config.Dir(), "hooks", scriptBasename())
+}
+
+// askScriptPath returns the full path to the ask-intercept hook script.
+func askScriptPath() string {
+	return filepath.Join(config.Dir(), "hooks", askScriptBasename())
 }
 
 // command returns the shell command that Claude Code should run for the hook.
@@ -38,24 +51,31 @@ func claudeSettingsPath() string {
 	return filepath.Join(home, ".claude", "settings.json")
 }
 
-// Install writes the hook script and merges a Stop hook entry into ~/.claude/settings.json.
+// Install writes the hook scripts and merges Stop + PreToolUse hook entries into ~/.claude/settings.json.
 func Install(notifDir string) error {
 	sp := scriptPath()
+	asp := askScriptPath()
 
-	// Write hook script
+	// Write hook scripts
 	if err := os.MkdirAll(filepath.Dir(sp), 0755); err != nil {
 		return fmt.Errorf("create hooks dir: %w", err)
 	}
 
-	var script string
+	var script, askScript string
 	if runtime.GOOS == "windows" {
 		script = windowsScript(notifDir)
+		askScript = windowsAskScript()
 	} else {
 		script = unixScript(notifDir)
+		askScript = unixAskScript()
 	}
 
 	if err := os.WriteFile(sp, []byte(script), 0755); err != nil {
 		return fmt.Errorf("write hook script: %w", err)
+	}
+
+	if err := os.WriteFile(asp, []byte(askScript), 0755); err != nil {
+		return fmt.Errorf("write ask-intercept script: %w", err)
 	}
 
 	// Merge into ~/.claude/settings.json
@@ -72,10 +92,13 @@ func Install(notifDir string) error {
 	cmd := command(sp)
 	mergeStopHook(settings, cmd)
 
+	askCmd := command(asp)
+	mergePreToolUseHook(settings, askCmd)
+
 	return writeSettings(settingsPath, settings)
 }
 
-// Uninstall removes the VoiceRelay Stop hook from ~/.claude/settings.json and deletes the script.
+// Uninstall removes VoiceRelay hooks from ~/.claude/settings.json and deletes the scripts.
 func Uninstall() error {
 	settingsPath := claudeSettingsPath()
 	settings, err := readSettings(settingsPath)
@@ -84,14 +107,15 @@ func Uninstall() error {
 	}
 
 	removeStopHook(settings)
+	removePreToolUseHook(settings)
 
 	if err := writeSettings(settingsPath, settings); err != nil {
 		return err
 	}
 
-	// Delete hook script
-	sp := scriptPath()
-	os.Remove(sp)
+	// Delete hook scripts
+	os.Remove(scriptPath())
+	os.Remove(askScriptPath())
 
 	return nil
 }
@@ -288,6 +312,107 @@ func removeStopHook(settings map[string]interface{}) {
 		}
 	} else {
 		hooksMap["Stop"] = filtered
+	}
+}
+
+// mergePreToolUseHook adds a VoiceRelay PreToolUse hook entry for AskUserQuestion if not already present.
+func mergePreToolUseHook(settings map[string]interface{}, cmd string) {
+	hooksRaw, ok := settings["hooks"]
+	if !ok {
+		hooksRaw = map[string]interface{}{}
+		settings["hooks"] = hooksRaw
+	}
+	hooksMap, ok := hooksRaw.(map[string]interface{})
+	if !ok {
+		hooksMap = map[string]interface{}{}
+		settings["hooks"] = hooksMap
+	}
+
+	hookEntry := map[string]interface{}{
+		"matcher": "AskUserQuestion",
+		"hooks": []interface{}{
+			map[string]interface{}{
+				"type":    "command",
+				"command": cmd,
+				"timeout": 10,
+			},
+		},
+	}
+
+	preRaw, ok := hooksMap["PreToolUse"]
+	if !ok {
+		hooksMap["PreToolUse"] = []interface{}{hookEntry}
+		return
+	}
+	preArr, ok := preRaw.([]interface{})
+	if !ok {
+		hooksMap["PreToolUse"] = []interface{}{hookEntry}
+		return
+	}
+
+	// Check if already present
+	for _, entry := range preArr {
+		entryMap, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		innerHooks, ok := entryMap["hooks"]
+		if !ok {
+			continue
+		}
+		innerArr, ok := innerHooks.([]interface{})
+		if !ok {
+			continue
+		}
+		for _, h := range innerArr {
+			hMap, ok := h.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if c, ok := hMap["command"].(string); ok && c == cmd {
+				return // already installed
+			}
+		}
+	}
+
+	hooksMap["PreToolUse"] = append(preArr, hookEntry)
+}
+
+// removePreToolUseHook removes VoiceRelay PreToolUse hook entries.
+func removePreToolUseHook(settings map[string]interface{}) {
+	hooksRaw, ok := settings["hooks"]
+	if !ok {
+		return
+	}
+	hooksMap, ok := hooksRaw.(map[string]interface{})
+	if !ok {
+		return
+	}
+	preRaw, ok := hooksMap["PreToolUse"]
+	if !ok {
+		return
+	}
+	preArr, ok := preRaw.([]interface{})
+	if !ok {
+		return
+	}
+
+	asp := askScriptPath()
+	var filtered []interface{}
+	for _, entry := range preArr {
+		if matchesScript(entry, asp) {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+
+	if len(filtered) == 0 {
+		delete(hooksMap, "PreToolUse")
+		if len(hooksMap) == 0 {
+			delete(settings, "hooks")
+		}
+	} else {
+		hooksMap["PreToolUse"] = filtered
 	}
 }
 
@@ -623,6 +748,107 @@ echo -n "$NOTIF_JSON" > "$TMP_FILE"
 mv "$TMP_FILE" "$FINAL_FILE"
 
 log "Wrote raw notification: $NOTIF_ID"
+exit 0
+`
+}
+
+// windowsAskScript returns the PowerShell hook script that intercepts AskUserQuestion
+// tool calls and POSTs the question data to the coordinator.
+func windowsAskScript() string {
+	return `# ask-intercept.ps1 — Claude Code "PreToolUse" hook for AskUserQuestion (auto-installed by VoiceRelay)
+$ErrorActionPreference = "SilentlyContinue"
+
+# Read hook input from stdin
+$raw = ""
+try { $raw = [Console]::In.ReadToEnd() } catch {}
+if (-not $raw) {
+    $raw = @($input) -join "` + "`" + `n"
+}
+if (-not $raw) { exit 0 }
+
+try {
+    $hookData = $raw | ConvertFrom-Json
+} catch { exit 0 }
+
+$toolName = $hookData.tool_name
+if ($toolName -ne "AskUserQuestion") { exit 0 }
+
+$toolInput = $hookData.tool_input
+if (-not $toolInput) { exit 0 }
+
+# Build the question payload
+$ts = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+$id = "ask-$ts"
+
+$payload = @{
+    id           = $id
+    reply_target = if ($env:CC_WRAPPER_NAME) { $env:CC_WRAPPER_NAME } else { "" }
+    questions    = $toolInput.questions
+} | ConvertTo-Json -Depth 10 -Compress
+
+# POST to coordinator (fire-and-forget, don't block Claude)
+try {
+    $uri = "http://localhost:53937/hooks/question"
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
+    $req = [System.Net.HttpWebRequest]::Create($uri)
+    $req.Method = "POST"
+    $req.ContentType = "application/json"
+    $req.ContentLength = $bytes.Length
+    $req.Timeout = 3000
+    $stream = $req.GetRequestStream()
+    $stream.Write($bytes, 0, $bytes.Length)
+    $stream.Close()
+    $resp = $req.GetResponse()
+    $resp.Close()
+} catch {}
+
+exit 0
+`
+}
+
+// unixAskScript returns the Bash hook script that intercepts AskUserQuestion
+// tool calls and POSTs the question data to the coordinator.
+func unixAskScript() string {
+	return `#!/usr/bin/env bash
+# ask-intercept.sh — Claude Code "PreToolUse" hook for AskUserQuestion (auto-installed by VoiceRelay)
+set -euo pipefail
+
+RAW=$(cat)
+if [ -z "$RAW" ]; then exit 0; fi
+
+# Use python3 to parse and POST
+python3 -c "
+import json, sys, os, urllib.request, time
+
+data = json.loads(sys.argv[1])
+if data.get('tool_name') != 'AskUserQuestion':
+    sys.exit(0)
+
+tool_input = data.get('tool_input', {})
+questions = tool_input.get('questions', [])
+if not questions:
+    sys.exit(0)
+
+ts = int(time.time() * 1000)
+payload = {
+    'id': f'ask-{ts}',
+    'reply_target': os.environ.get('CC_WRAPPER_NAME', ''),
+    'questions': questions,
+}
+
+body = json.dumps(payload).encode()
+req = urllib.request.Request(
+    'http://localhost:53937/hooks/question',
+    data=body,
+    headers={'Content-Type': 'application/json'},
+    method='POST',
+)
+try:
+    urllib.request.urlopen(req, timeout=3)
+except Exception:
+    pass
+" "$RAW" 2>/dev/null || true
+
 exit 0
 `
 }

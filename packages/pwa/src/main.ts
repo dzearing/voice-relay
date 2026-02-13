@@ -319,6 +319,10 @@ function connectObserver() {
         handleAgentStatus(msg);
       } else if (msg.type === "notifications_updated") {
         fetchNotifications();
+      } else if (msg.type === "question") {
+        handleQuestionEvent(msg.question);
+      } else if (msg.type === "question_answered") {
+        handleQuestionAnswered(msg.question_id);
       }
     } catch {}
   };
@@ -1879,6 +1883,201 @@ notifAutoplayBtn.addEventListener("click", () => {
   }
 });
 
+// ── AskUserQuestion Interception ──
+
+const questionOverlay = document.getElementById("question-overlay") as HTMLDivElement;
+const questionBody = document.getElementById("question-body") as HTMLDivElement;
+const questionCloseBtn = document.getElementById("question-close-btn") as HTMLButtonElement;
+
+interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+interface QuestionItemData {
+  question: string;
+  header: string;
+  options: QuestionOption[];
+  multiSelect: boolean;
+}
+
+interface PendingQuestionData {
+  id: string;
+  reply_target: string;
+  questions: QuestionItemData[];
+  created_at: string;
+  answered: boolean;
+}
+
+let pendingQuestions: PendingQuestionData[] = [];
+
+function openQuestionOverlay() {
+  questionOverlay.classList.add("visible");
+  document.body.style.overflow = "hidden";
+  renderQuestions();
+}
+
+function closeQuestionOverlay() {
+  questionOverlay.classList.remove("visible");
+  document.body.style.overflow = "";
+}
+
+function renderQuestions() {
+  if (pendingQuestions.length === 0) {
+    questionBody.innerHTML = `<div class="notif-empty">No pending questions.</div>`;
+    return;
+  }
+
+  questionBody.innerHTML = pendingQuestions.map((pq) => {
+    return pq.questions.map((q, qIdx) => {
+      const optionsHtml = q.options.map((opt, optIdx) => {
+        return `<button class="question-option-btn" data-qid="${pq.id}" data-opt-index="${optIdx}">
+          <span>${escapeHtml(opt.label)}</span>
+          ${opt.description ? `<span class="question-option-desc">${escapeHtml(opt.description)}</span>` : ""}
+        </button>`;
+      }).join("");
+
+      // "Other" free-text input (AskUserQuestion always has an implicit "Other" option)
+      const otherHtml = `<div class="question-other-row">
+        <input class="question-other-input" data-qid="${pq.id}" placeholder="Other..." type="text" />
+        <button class="question-other-send" data-qid="${pq.id}" data-other-index="${q.options.length}">Send</button>
+      </div>`;
+
+      return `<div class="question-item" data-qid="${pq.id}">
+        ${q.header ? `<div class="question-header-chip">${escapeHtml(q.header)}</div>` : ""}
+        <div class="question-text">${escapeHtml(q.question)}</div>
+        <div class="question-options">${optionsHtml}</div>
+        ${otherHtml}
+      </div>`;
+    }).join("");
+  }).join("");
+
+  // Wire up option buttons
+  questionBody.querySelectorAll(".question-option-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const el = btn as HTMLElement;
+      const qid = el.dataset.qid!;
+      const optIndex = parseInt(el.dataset.optIndex!, 10);
+      answerQuestion(qid, optIndex, "");
+    });
+  });
+
+  // Wire up "Other" send buttons
+  questionBody.querySelectorAll(".question-other-send").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const el = btn as HTMLElement;
+      const qid = el.dataset.qid!;
+      const otherIndex = parseInt(el.dataset.otherIndex!, 10);
+      const input = questionBody.querySelector(`.question-other-input[data-qid="${qid}"]`) as HTMLInputElement;
+      const text = input?.value.trim();
+      if (text) {
+        answerQuestion(qid, otherIndex, text);
+      }
+    });
+  });
+
+  // Wire up Enter key on Other inputs
+  questionBody.querySelectorAll(".question-other-input").forEach((input) => {
+    input.addEventListener("keydown", (e: Event) => {
+      const ke = e as KeyboardEvent;
+      if (ke.key === "Enter") {
+        ke.preventDefault();
+        const el = input as HTMLInputElement;
+        const qid = el.dataset.qid!;
+        const sendBtn = questionBody.querySelector(`.question-other-send[data-qid="${qid}"]`) as HTMLElement;
+        const otherIndex = parseInt(sendBtn.dataset.otherIndex!, 10);
+        const text = el.value.trim();
+        if (text) {
+          answerQuestion(qid, otherIndex, text);
+        }
+      }
+    });
+  });
+}
+
+async function answerQuestion(questionId: string, index: number, otherText: string) {
+  // Disable all buttons for this question
+  const item = questionBody.querySelector(`.question-item[data-qid="${questionId}"]`);
+  if (item) {
+    item.querySelectorAll("button").forEach((b) => (b as HTMLButtonElement).disabled = true);
+    // Highlight the selected option
+    const selected = item.querySelector(`.question-option-btn[data-opt-index="${index}"]`);
+    if (selected) selected.classList.add("selected");
+  }
+
+  try {
+    const resp = await fetch(`${API_BASE}/question/answer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        question_id: questionId,
+        index,
+        other_text: otherText,
+      }),
+    });
+
+    if (resp.ok) {
+      // Remove from local list and re-render
+      pendingQuestions = pendingQuestions.filter((q) => q.id !== questionId);
+      if (pendingQuestions.length === 0) {
+        closeQuestionOverlay();
+      } else {
+        renderQuestions();
+      }
+      setStatus("Answer sent!", "success");
+      setTimeout(hideStatus, 2000);
+    } else {
+      const result = await resp.json();
+      setStatus(result.error || "Failed to send answer", "error");
+      setTimeout(hideStatus, 3000);
+      // Re-enable buttons
+      if (item) item.querySelectorAll("button").forEach((b) => (b as HTMLButtonElement).disabled = false);
+    }
+  } catch {
+    setStatus("Network error", "error");
+    setTimeout(hideStatus, 3000);
+    if (item) item.querySelectorAll("button").forEach((b) => (b as HTMLButtonElement).disabled = false);
+  }
+}
+
+function handleQuestionEvent(pq: PendingQuestionData) {
+  // Add to pending list if not already there
+  if (!pendingQuestions.find((q) => q.id === pq.id)) {
+    pendingQuestions.push(pq);
+  }
+  // Auto-open the question overlay
+  openQuestionOverlay();
+}
+
+function handleQuestionAnswered(questionId: string) {
+  pendingQuestions = pendingQuestions.filter((q) => q.id !== questionId);
+  if (isQuestionOverlayOpen() && pendingQuestions.length === 0) {
+    closeQuestionOverlay();
+  } else if (isQuestionOverlayOpen()) {
+    renderQuestions();
+  }
+}
+
+function isQuestionOverlayOpen() {
+  return questionOverlay.classList.contains("visible");
+}
+
+async function fetchPendingQuestions() {
+  try {
+    const resp = await fetch(`${API_BASE}/questions`);
+    if (resp.ok) {
+      const items = await resp.json();
+      pendingQuestions = Array.isArray(items) ? items : [];
+      if (pendingQuestions.length > 0) {
+        openQuestionOverlay();
+      }
+    }
+  } catch {}
+}
+
+questionCloseBtn.addEventListener("click", closeQuestionOverlay);
+questionOverlay.querySelector(".overlay-backdrop")?.addEventListener("click", closeQuestionOverlay);
+
 // Register service worker
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js").catch(() => {});
@@ -1900,3 +2099,4 @@ setMode(currentMode);
 setState("idle");
 hideStatus();
 fetchNotifications();
+fetchPendingQuestions();

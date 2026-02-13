@@ -22,6 +22,7 @@ type Message struct {
 	Name    string `json:"name,omitempty"`
 	Content string `json:"content,omitempty"`
 	Session int    `json:"session,omitempty"`
+	Index   int    `json:"index,omitempty"` // option index for "select" type
 }
 
 func main() {
@@ -171,6 +172,12 @@ func connectAndServe(url, name string, p ptyHandle) {
 			}
 			log.Printf("[ws] injecting text (%d chars)", len(msg.Content))
 			injectText(p, msg.Content)
+		case "select":
+			// Navigate AskUserQuestion TUI: arrow-down N times, then Enter.
+			// If Content is set, it's an "Other" response: navigate to last
+			// option (index), press Enter to select "Other", then type the text.
+			log.Printf("[ws] selecting option index=%d content=%q", msg.Index, msg.Content)
+			injectSelect(p, msg.Index, msg.Content)
 		}
 	}
 }
@@ -197,6 +204,27 @@ func injectText(p ptyHandle, text string) {
 	// In raw-mode terminals, Enter is \r (carriage return), not \n
 	time.Sleep(20 * time.Millisecond)
 	p.Write([]byte{'\r'})
+}
+
+// injectSelect navigates an AskUserQuestion TUI picker.
+// It sends `index` down-arrow presses to reach the desired option, then Enter.
+// If `otherText` is non-empty, the selected option is "Other" — after pressing
+// Enter on it, we type the custom text and press Enter again.
+func injectSelect(p ptyHandle, index int, otherText string) {
+	downArrow := []byte("\x1b[B") // ANSI escape: cursor down
+	for i := 0; i < index; i++ {
+		p.Write(downArrow)
+		time.Sleep(30 * time.Millisecond)
+	}
+	// Press Enter to select the option
+	time.Sleep(50 * time.Millisecond)
+	p.Write([]byte{'\r'})
+
+	if otherText != "" {
+		// Wait for "Other" text input to appear, then type
+		time.Sleep(200 * time.Millisecond)
+		injectText(p, otherText)
+	}
 }
 
 // ptyHandle abstracts the PTY interface across platforms.
