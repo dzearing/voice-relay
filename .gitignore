@@ -16,6 +16,7 @@ venv/
 # Build outputs
 build/
 *.exe
+*.exe~
 *.app
 
 # IDE
@@ -26,10 +27,16 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+nul
 
 # Go binaries
 apps/echo-desktop/voice-relay-echo*
 apps/echo-desktop/VoiceRelay*
+apps/cc-wrapper/cc-wrapper*
+
+# Claude Code local config
+.claude/settings.local.json
+.claude/hooks/
 
 # Git worktrees
 .worktrees/
