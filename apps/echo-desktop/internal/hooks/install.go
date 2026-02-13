@@ -120,7 +120,7 @@ func Uninstall() error {
 	return nil
 }
 
-// Status checks whether a VoiceRelay Stop hook is installed.
+// Status checks whether all VoiceRelay hooks (Stop + PreToolUse) are installed.
 func Status() (installed bool, path string) {
 	settingsPath := claudeSettingsPath()
 	settings, err := readSettings(settingsPath)
@@ -128,27 +128,44 @@ func Status() (installed bool, path string) {
 		return false, ""
 	}
 
+	hooksRaw, ok := settings["hooks"]
+	if !ok {
+		return false, ""
+	}
+	hooksMap, ok := hooksRaw.(map[string]interface{})
+	if !ok {
+		return false, ""
+	}
+
+	// Check Stop hook
 	sp := scriptPath()
-	cmd := command(sp)
-
-	hooks, ok := settings["hooks"]
-	if !ok {
-		return false, ""
-	}
-	hooksMap, ok := hooks.(map[string]interface{})
-	if !ok {
-		return false, ""
-	}
-	stopList, ok := hooksMap["Stop"]
-	if !ok {
-		return false, ""
-	}
-	stopArr, ok := stopList.([]interface{})
-	if !ok {
+	stopCmd := command(sp)
+	if !hookEntryExists(hooksMap, "Stop", stopCmd) {
 		return false, ""
 	}
 
-	for _, entry := range stopArr {
+	// Check PreToolUse hook
+	asp := askScriptPath()
+	askCmd := command(asp)
+	if !hookEntryExists(hooksMap, "PreToolUse", askCmd) {
+		return false, ""
+	}
+
+	return true, sp
+}
+
+// hookEntryExists checks whether a hook entry with the given command exists
+// under the specified hook type (e.g. "Stop", "PreToolUse").
+func hookEntryExists(hooksMap map[string]interface{}, hookType, cmd string) bool {
+	listRaw, ok := hooksMap[hookType]
+	if !ok {
+		return false
+	}
+	listArr, ok := listRaw.([]interface{})
+	if !ok {
+		return false
+	}
+	for _, entry := range listArr {
 		entryMap, ok := entry.(map[string]interface{})
 		if !ok {
 			continue
@@ -167,12 +184,11 @@ func Status() (installed bool, path string) {
 				continue
 			}
 			if c, ok := hMap["command"].(string); ok && c == cmd {
-				return true, sp
+				return true
 			}
 		}
 	}
-
-	return false, ""
+	return false
 }
 
 // readSettings reads and parses ~/.claude/settings.json, returning an empty map if missing.
