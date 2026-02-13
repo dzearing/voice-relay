@@ -251,7 +251,7 @@ func (r *registry) sendText(name, text string) bool {
 // sendSelect sends a "select" message to a cc-wrapper device, instructing it
 // to navigate an AskUserQuestion TUI by pressing down-arrow `index` times
 // then Enter. If otherText is non-empty, it types that after selecting "Other".
-func (r *registry) sendSelect(name string, index int, otherText string) bool {
+func (r *registry) sendSelect(name string, indices []int, otherText string) bool {
 	r.mu.RLock()
 	svc, ok := r.services[name]
 	r.mu.RUnlock()
@@ -261,8 +261,12 @@ func (r *registry) sendSelect(name string, index int, otherText string) bool {
 	}
 
 	msg := map[string]interface{}{
-		"type":  "select",
-		"index": index,
+		"type":    "select",
+		"indices": indices,
+	}
+	// Keep single "index" for backward compat with older cc-wrapper
+	if len(indices) > 0 {
+		msg["index"] = indices[0]
 	}
 	if otherText != "" {
 		msg["content"] = otherText

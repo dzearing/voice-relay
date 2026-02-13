@@ -27,6 +27,9 @@ export default defineConfig({
       "/tts-voice": "http://localhost:53937",
       "/tts-preview": "http://localhost:53937",
       "/notifications": "http://localhost:53937",
+      "/hooks": "http://localhost:53937",
+      "/questions": "http://localhost:53937",
+      "/question": "http://localhost:53937",
     },
   },
   plugins: [

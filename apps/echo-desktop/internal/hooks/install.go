@@ -796,11 +796,22 @@ if (-not $toolInput) { exit 0 }
 $ts = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 $id = "ask-$ts"
 
-$payload = @{
+# Gather session context
+$repo = ""
+try { $repo = (Split-Path -Leaf (git rev-parse --show-toplevel 2>$null)) } catch {}
+$branch = ""
+try { $branch = (git branch --show-current 2>$null) } catch {}
+
+$payloadObj = @{
     id           = $id
     reply_target = if ($env:CC_WRAPPER_NAME) { $env:CC_WRAPPER_NAME } else { "" }
     questions    = $toolInput.questions
-} | ConvertTo-Json -Depth 10 -Compress
+}
+if ($repo) { $payloadObj["repo"] = $repo }
+if ($branch) { $payloadObj["branch"] = $branch }
+if ($env:CC_SESSION) { $payloadObj["session"] = $env:CC_SESSION }
+
+$payload = $payloadObj | ConvertTo-Json -Depth 10 -Compress
 
 # POST to coordinator (fire-and-forget, don't block Claude)
 try {
@@ -851,6 +862,24 @@ payload = {
     'reply_target': os.environ.get('CC_WRAPPER_NAME', ''),
     'questions': questions,
 }
+
+# Add session context
+import subprocess
+try:
+    repo = os.path.basename(subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], stderr=subprocess.DEVNULL).decode().strip())
+    if repo:
+        payload['repo'] = repo
+except Exception:
+    pass
+try:
+    branch = subprocess.check_output(['git', 'branch', '--show-current'], stderr=subprocess.DEVNULL).decode().strip()
+    if branch:
+        payload['branch'] = branch
+except Exception:
+    pass
+session = os.environ.get('CC_SESSION', '')
+if session:
+    payload['session'] = session
 
 body = json.dumps(payload).encode()
 req = urllib.request.Request(

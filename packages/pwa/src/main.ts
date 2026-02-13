@@ -1155,6 +1155,21 @@ function formatNotifSource(n: NotificationItem): string {
   return label;
 }
 
+function formatQuestionSource(pq: PendingQuestionData): string {
+  let label = "";
+  if (pq.repo) {
+    label = pq.repo;
+    if (pq.branch) label += ` \u00B7 ${pq.branch}`;
+  } else if (pq.reply_target) {
+    // Fall back to machine name (strip the -claude-XXXX suffix for readability)
+    label = pq.reply_target.replace(/-claude-[a-f0-9]+$/i, "");
+  }
+  if (pq.session) {
+    label += (label ? " \u00B7 " : "") + `#${pq.session}`;
+  }
+  return label;
+}
+
 // ── Overlay open/close ──
 
 function openNotifOverlay() {
@@ -1226,6 +1241,7 @@ function showDetailsPanel(text: string) {
 function closeNotifOverlay() {
   hideDetailsPanel();
   closeReplyPanel();
+  closeAnswerPanel();
   notifOverlay.classList.remove("visible");
   document.body.style.overflow = "";
   stopNotifAudio();
@@ -1248,34 +1264,64 @@ const ICON_DISMISS = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none
 const ICON_REPLY = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>`;
 
 function renderNotifCards() {
-  if (notifItems.length === 0) {
+  // Build combined list: orphan questions + notifications
+  const orphanQs = getOrphanQuestions();
+  const totalItems = orphanQs.length + notifItems.length;
+
+  if (totalItems === 0) {
     notifCarousel.innerHTML = `<div class="notif-empty">There are no more notifications.</div>`;
     notifDots.innerHTML = "";
     updateNotifCount();
     return;
   }
 
-  notifCarousel.innerHTML = notifItems.map((n, i) => {
+  // Render orphan question cards first
+  const orphanHtml = orphanQs.map((pq, i) => {
+    const q = pq.questions[0];
+    if (!q) return "";
+    const cardIdx = i;
+    return `<div class="notif-card question-card${cardIdx === notifIndex ? " active" : ""}" data-index="${cardIdx}" data-qid="${pq.id}">
+      <div class="notif-card-actions">
+        <button class="notif-answer-btn" data-qid="${pq.id}" aria-label="Answer">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          Answer
+        </button>
+        <button class="notif-card-close" data-qid="${pq.id}" data-dismiss-question="true" aria-label="Dismiss">${ICON_DISMISS}</button>
+      </div>
+      <div class="notif-card-question-badge">Waiting for answer</div>
+      ${formatQuestionSource(pq) ? `<div class="notif-card-source">${escapeHtml(formatQuestionSource(pq))}</div>` : ""}
+      <div class="notif-card-title">${q.header ? escapeHtml(q.header) : "Claude is asking..."}</div>
+      <div class="notif-card-summary">${escapeHtml(q.question)}</div>
+    </div>`;
+  }).join("");
+
+  // Render notification cards
+  const notifHtml = notifItems.map((n, i) => {
+    const cardIdx = orphanQs.length + i;
     const hasDetails = !!(n.details && n.details_audio);
     const played = isPlayed(n.id);
-    return `<div class="notif-card${i === notifIndex ? " active" : ""}${played ? " played" : ""}" data-index="${i}" data-id="${n.id}">
+    const pendingQ = getQuestionForCard(n);
+    return `<div class="notif-card${cardIdx === notifIndex ? " active" : ""}${played ? " played" : ""}${pendingQ ? " question-card" : ""}" data-index="${cardIdx}" data-id="${n.id}">
       <div class="notif-card-actions">
-        ${n.source === "claude-code" && ccWrapperConnected ? `<button class="notif-reply-btn" data-index="${i}" aria-label="Reply">${ICON_REPLY} Reply</button>` : ""}
+        ${pendingQ ? `<button class="notif-answer-btn" data-qid="${pendingQ.id}" aria-label="Answer"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> Answer</button>` : n.source === "claude-code" && ccWrapperConnected ? `<button class="notif-reply-btn" data-index="${cardIdx}" aria-label="Reply">${ICON_REPLY} Reply</button>` : ""}
         <button class="notif-card-close" data-id="${n.id}" aria-label="Dismiss">${ICON_DISMISS}</button>
       </div>
-      ${played ? `<div class="notif-card-played-badge">Played</div>` : ""}
+      ${pendingQ ? `<div class="notif-card-question-badge">Waiting for answer</div>` : played ? `<div class="notif-card-played-badge">Played</div>` : ""}
       ${formatNotifSource(n) ? `<div class="notif-card-source">${escapeHtml(formatNotifSource(n))}</div>` : ""}
       <div class="notif-card-title">${escapeHtml(n.title)}</div>
       <div class="notif-card-summary">${escapeHtml(n.summary)}</div>
-      ${hasDetails ? `<button class="notif-see-more-btn" data-index="${i}">See more</button>` : ""}
+      ${hasDetails ? `<button class="notif-see-more-btn" data-index="${cardIdx}">See more</button>` : ""}
     </div>`;
-  }).join("") + `<div class="notif-card notif-replay-card${notifIndex === notifItems.length ? " active" : ""}" data-action="replay">
+  }).join("");
+
+  const replayIdx = totalItems;
+  notifCarousel.innerHTML = orphanHtml + notifHtml + `<div class="notif-card notif-replay-card${notifIndex === replayIdx ? " active" : ""}" data-action="replay">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
       <div>Replay All</div>
     </div>`;
 
   // Dot indicators (include replay card)
-  const totalCards = notifItems.length + 1;
+  const totalCards = totalItems + 1;
   notifDots.innerHTML = totalCards <= 1 ? "" : Array.from({length: totalCards}, (_, i) =>
     `<div class="notif-dot${i === notifIndex ? " active" : ""}"></div>`
   ).join("");
@@ -1283,8 +1329,18 @@ function renderNotifCards() {
   // X dismiss buttons on cards
   notifCarousel.querySelectorAll(".notif-card-close").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const id = (btn as HTMLElement).dataset.id!;
-      dismissNotification(id);
+      const el = btn as HTMLElement;
+      if (el.dataset.dismissQuestion === "true") {
+        // Dismiss an orphan question card
+        const qid = el.dataset.qid!;
+        pendingQuestions = pendingQuestions.filter((q) => q.id !== qid);
+        closeAnswerPanel();
+        renderNotifCards();
+        scrollToCard(Math.min(notifIndex, (getOrphanQuestions().length + notifItems.length) - 1), "auto");
+      } else {
+        const id = el.dataset.id!;
+        dismissNotification(id);
+      }
     });
   });
 
@@ -1292,7 +1348,8 @@ function renderNotifCards() {
   notifCarousel.querySelectorAll(".notif-see-more-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       const idx = parseInt((btn as HTMLElement).dataset.index!, 10);
-      const item = notifItems[idx];
+      const notifIdx = idx - orphanQs.length;
+      const item = notifItems[notifIdx];
       if (!item) return;
       // Show details text in panel
       closeReplyPanel(); // close reply drawer if open
@@ -1312,8 +1369,18 @@ function renderNotifCards() {
   notifCarousel.querySelectorAll(".notif-reply-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       const idx = parseInt((btn as HTMLElement).dataset.index!, 10);
-      const item = notifItems[idx];
+      const notifIdx = idx - orphanQs.length;
+      const item = notifItems[notifIdx];
       if (item) openReplyPanel(item.summary, item.reply_target);
+    });
+  });
+
+  // Answer buttons (cards with pending questions)
+  notifCarousel.querySelectorAll(".notif-answer-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const qid = (btn as HTMLElement).dataset.qid!;
+      const pq = pendingQuestions.find((q) => q.id === qid);
+      if (pq) openAnswerPanel(pq);
     });
   });
 
@@ -1483,13 +1550,16 @@ function setupCarouselScroll() {
     });
     if (closest !== notifIndex) {
       // Mark the card we're swiping away from as played
-      const prevItem = notifItems[notifIndex];
-      if (prevItem) markPlayed(prevItem.id);
+      const orphanCount = getOrphanQuestions().length;
+      const prevNotifIdx = notifIndex - orphanCount;
+      if (prevNotifIdx >= 0 && prevNotifIdx < notifItems.length) {
+        markPlayed(notifItems[prevNotifIdx].id);
+      }
 
       notifIndex = closest;
       updateNotifDots();
       updateActiveCard();
-      hideDetailsPanel();
+      // Panels already closed by the scroll handler above
       // User swiped — stop current audio, don't auto-play next
       stopNotifAudio();
       stopAutoplay();
@@ -1497,6 +1567,14 @@ function setupCarouselScroll() {
   };
 
   notifCarousel.addEventListener("scroll", () => {
+    // Close panels immediately when swiping starts
+    if (isAnyPanelOpen()) {
+      hideDetailsPanel();
+      closeReplyPanel();
+      if (Date.now() - answerPanelOpenedAt > 300) {
+        closeAnswerPanel();
+      }
+    }
     if (scrollTimer) clearTimeout(scrollTimer);
     scrollTimer = setTimeout(updateIndex, 150);
   }, { passive: true });
@@ -1610,6 +1688,7 @@ function scheduleAutoAdvance() {
   stopAutoplay();
   if (!autoplayNewNotifs) return;
   if (!isNotifOverlayOpen()) return;
+  if (isAnyPanelOpen()) return; // don't auto-advance while a panel is open
   notifAutoplayTimer = setTimeout(() => {
     notifAutoplayTimer = null;
     if (!isNotifOverlayOpen()) return;
@@ -1695,7 +1774,8 @@ async function fetchNotifications() {
   // Auto-play: if new items arrived and autoplay is on, open overlay and play.
   // Don't interrupt audio that's already playing — scheduleAutoAdvance will
   // pick up new unplayed notifications when the current one finishes.
-  if (autoplayNewNotifs && newItems.length > 0 && !notifPlaying) {
+  // Don't auto-play while a panel (details/reply/answer) is open.
+  if (autoplayNewNotifs && newItems.length > 0 && !notifPlaying && !isAnyPanelOpen()) {
     if (!isNotifOverlayOpen()) {
       openNotifOverlay();
     } else {
@@ -1883,11 +1963,9 @@ notifAutoplayBtn.addEventListener("click", () => {
   }
 });
 
-// ── AskUserQuestion Interception ──
+// ── AskUserQuestion Interception (rendered as cards in notification carousel) ──
 
-const questionOverlay = document.getElementById("question-overlay") as HTMLDivElement;
-const questionBody = document.getElementById("question-body") as HTMLDivElement;
-const questionCloseBtn = document.getElementById("question-close-btn") as HTMLButtonElement;
+const notifAnswerPanel = document.getElementById("notif-answer-panel") as HTMLDivElement;
 
 interface QuestionOption {
   label: string;
@@ -1905,103 +1983,164 @@ interface PendingQuestionData {
   id: string;
   reply_target: string;
   questions: QuestionItemData[];
+  repo?: string;
+  branch?: string;
+  session?: string;
   created_at: string;
   answered: boolean;
 }
 
 let pendingQuestions: PendingQuestionData[] = [];
 
-function openQuestionOverlay() {
-  questionOverlay.classList.add("visible");
-  document.body.style.overflow = "hidden";
-  renderQuestions();
+function getQuestionForCard(n: NotificationItem): PendingQuestionData | undefined {
+  if (!n.reply_target) return undefined;
+  return pendingQuestions.find((q) => q.reply_target === n.reply_target && !q.answered);
 }
 
-function closeQuestionOverlay() {
-  questionOverlay.classList.remove("visible");
-  document.body.style.overflow = "";
+function getOrphanQuestions(): PendingQuestionData[] {
+  const cardTargets = new Set(notifItems.filter((n) => n.reply_target).map((n) => n.reply_target));
+  return pendingQuestions.filter((q) => !q.answered && !cardTargets.has(q.reply_target));
 }
 
-function renderQuestions() {
-  if (pendingQuestions.length === 0) {
-    questionBody.innerHTML = `<div class="notif-empty">No pending questions.</div>`;
-    return;
+function isAnyPanelOpen(): boolean {
+  return notifDetailsPanel.classList.contains("visible")
+    || notifReplyPanel.classList.contains("visible")
+    || notifAnswerPanel.classList.contains("visible");
+}
+
+// Guard: when we just opened the answer panel, ignore scroll-triggered close
+let answerPanelOpenedAt = 0;
+
+function closeAnswerPanel() {
+  notifAnswerPanel.classList.remove("visible");
+}
+
+function showAnswerError(msg: string) {
+  let errEl = notifAnswerPanel.querySelector(".answer-error") as HTMLDivElement;
+  if (!errEl) {
+    errEl = document.createElement("div");
+    errEl.className = "answer-error";
+    notifAnswerPanel.appendChild(errEl);
+  }
+  errEl.textContent = msg;
+  setTimeout(() => errEl.remove(), 4000);
+}
+
+function openAnswerPanel(pq: PendingQuestionData) {
+  hideDetailsPanel();
+  closeReplyPanel();
+
+  const q = pq.questions[0]; // handle first question
+  if (!q) return;
+
+  const ICON_CLOSE = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`;
+  const ICON_CHECK = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+
+  const isMulti = q.multiSelect;
+
+  const optionsHtml = q.options.map((opt, i) =>
+    `<button class="answer-option-btn${isMulti ? " multi" : ""}" data-index="${i}">
+      ${isMulti ? `<span class="answer-check">${ICON_CHECK}</span>` : ""}
+      <span class="answer-option-label">
+        <span>${escapeHtml(opt.label)}</span>
+        ${opt.description ? `<span class="answer-option-desc">${escapeHtml(opt.description)}</span>` : ""}
+      </span>
+    </button>`
+  ).join("");
+
+  notifAnswerPanel.innerHTML = `
+    <div class="notif-reply-header">
+      <div class="answer-question-text">${escapeHtml(q.question)}</div>
+      <button class="notif-slide-panel-close" aria-label="Close">${ICON_CLOSE}</button>
+    </div>
+    <div class="answer-options">${optionsHtml}</div>
+    ${isMulti ? `<button class="answer-submit-btn" disabled>Send</button>` : ""}
+    <div class="answer-other-row">
+      <input class="answer-other-input" placeholder="Other..." type="text" />
+      <button class="answer-other-send" data-other-index="${q.options.length}">Send</button>
+    </div>`;
+
+  notifAnswerPanel.classList.add("visible");
+  answerPanelOpenedAt = Date.now();
+
+  // Close button
+  notifAnswerPanel.querySelector(".notif-slide-panel-close")!.addEventListener("click", closeAnswerPanel);
+  setupPanelSwipeDismiss(notifAnswerPanel, closeAnswerPanel);
+
+  if (isMulti) {
+    // Multi-select: toggle checked state on tap, send button submits all
+    const selectedIndices = new Set<number>();
+    const submitBtn = notifAnswerPanel.querySelector(".answer-submit-btn") as HTMLButtonElement;
+
+    const updateSubmitLabel = () => {
+      if (selectedIndices.size === 0) {
+        submitBtn.textContent = "Send";
+        submitBtn.disabled = true;
+      } else {
+        const labels = Array.from(selectedIndices)
+          .sort((a, b) => a - b)
+          .map((i) => q.options[i]?.label || "")
+          .filter(Boolean);
+        submitBtn.textContent = `Send: ${labels.join(", ")}`;
+        submitBtn.disabled = false;
+      }
+    };
+
+    notifAnswerPanel.querySelectorAll(".answer-option-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const idx = parseInt((btn as HTMLElement).dataset.index!, 10);
+        if (selectedIndices.has(idx)) {
+          selectedIndices.delete(idx);
+          btn.classList.remove("checked");
+        } else {
+          selectedIndices.add(idx);
+          btn.classList.add("checked");
+        }
+        updateSubmitLabel();
+      });
+    });
+
+    submitBtn.addEventListener("click", () => {
+      if (selectedIndices.size > 0) {
+        submitAnswer(pq.id, Array.from(selectedIndices), "");
+      }
+    });
+  } else {
+    // Single-select: tap = immediate submit
+    notifAnswerPanel.querySelectorAll(".answer-option-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const idx = parseInt((btn as HTMLElement).dataset.index!, 10);
+        submitAnswer(pq.id, [idx], "");
+      });
+    });
   }
 
-  questionBody.innerHTML = pendingQuestions.map((pq) => {
-    return pq.questions.map((q, qIdx) => {
-      const optionsHtml = q.options.map((opt, optIdx) => {
-        return `<button class="question-option-btn" data-qid="${pq.id}" data-opt-index="${optIdx}">
-          <span>${escapeHtml(opt.label)}</span>
-          ${opt.description ? `<span class="question-option-desc">${escapeHtml(opt.description)}</span>` : ""}
-        </button>`;
-      }).join("");
+  // Other send
+  const otherInput = notifAnswerPanel.querySelector(".answer-other-input") as HTMLInputElement;
+  const otherSend = notifAnswerPanel.querySelector(".answer-other-send") as HTMLButtonElement;
+  const otherIndex = q.options.length;
 
-      // "Other" free-text input (AskUserQuestion always has an implicit "Other" option)
-      const otherHtml = `<div class="question-other-row">
-        <input class="question-other-input" data-qid="${pq.id}" placeholder="Other..." type="text" />
-        <button class="question-other-send" data-qid="${pq.id}" data-other-index="${q.options.length}">Send</button>
-      </div>`;
-
-      return `<div class="question-item" data-qid="${pq.id}">
-        ${q.header ? `<div class="question-header-chip">${escapeHtml(q.header)}</div>` : ""}
-        <div class="question-text">${escapeHtml(q.question)}</div>
-        <div class="question-options">${optionsHtml}</div>
-        ${otherHtml}
-      </div>`;
-    }).join("");
-  }).join("");
-
-  // Wire up option buttons
-  questionBody.querySelectorAll(".question-option-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const el = btn as HTMLElement;
-      const qid = el.dataset.qid!;
-      const optIndex = parseInt(el.dataset.optIndex!, 10);
-      answerQuestion(qid, optIndex, "");
-    });
+  otherSend.addEventListener("click", () => {
+    const text = otherInput.value.trim();
+    if (text) submitAnswer(pq.id, [otherIndex], text);
   });
 
-  // Wire up "Other" send buttons
-  questionBody.querySelectorAll(".question-other-send").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const el = btn as HTMLElement;
-      const qid = el.dataset.qid!;
-      const otherIndex = parseInt(el.dataset.otherIndex!, 10);
-      const input = questionBody.querySelector(`.question-other-input[data-qid="${qid}"]`) as HTMLInputElement;
-      const text = input?.value.trim();
-      if (text) {
-        answerQuestion(qid, otherIndex, text);
-      }
-    });
-  });
-
-  // Wire up Enter key on Other inputs
-  questionBody.querySelectorAll(".question-other-input").forEach((input) => {
-    input.addEventListener("keydown", (e: Event) => {
-      const ke = e as KeyboardEvent;
-      if (ke.key === "Enter") {
-        ke.preventDefault();
-        const el = input as HTMLInputElement;
-        const qid = el.dataset.qid!;
-        const sendBtn = questionBody.querySelector(`.question-other-send[data-qid="${qid}"]`) as HTMLElement;
-        const otherIndex = parseInt(sendBtn.dataset.otherIndex!, 10);
-        const text = el.value.trim();
-        if (text) {
-          answerQuestion(qid, otherIndex, text);
-        }
-      }
-    });
+  otherInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const text = otherInput.value.trim();
+      if (text) submitAnswer(pq.id, [otherIndex], text);
+    }
   });
 }
 
-async function answerQuestion(questionId: string, index: number, otherText: string) {
-  // Disable all buttons for this question
-  const item = questionBody.querySelector(`.question-item[data-qid="${questionId}"]`);
-  if (item) {
-    item.querySelectorAll("button").forEach((b) => (b as HTMLButtonElement).disabled = true);
-    // Highlight the selected option
-    const selected = item.querySelector(`.question-option-btn[data-opt-index="${index}"]`);
+async function submitAnswer(questionId: string, indices: number[], otherText: string) {
+  // Disable all buttons in the panel
+  notifAnswerPanel.querySelectorAll("button:not(.notif-slide-panel-close)").forEach(
+    (b) => ((b as HTMLButtonElement).disabled = true)
+  );
+  for (const idx of indices) {
+    const selected = notifAnswerPanel.querySelector(`.answer-option-btn[data-index="${idx}"]`);
     if (selected) selected.classList.add("selected");
   }
 
@@ -2009,57 +2148,47 @@ async function answerQuestion(questionId: string, index: number, otherText: stri
     const resp = await fetch(`${API_BASE}/question/answer`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        question_id: questionId,
-        index,
-        other_text: otherText,
-      }),
+      body: JSON.stringify({ question_id: questionId, index: indices[0], indices, other_text: otherText }),
     });
 
     if (resp.ok) {
-      // Remove from local list and re-render
       pendingQuestions = pendingQuestions.filter((q) => q.id !== questionId);
-      if (pendingQuestions.length === 0) {
-        closeQuestionOverlay();
-      } else {
-        renderQuestions();
-      }
+      closeAnswerPanel();
+      renderNotifCards();
       setStatus("Answer sent!", "success");
       setTimeout(hideStatus, 2000);
     } else {
-      const result = await resp.json();
-      setStatus(result.error || "Failed to send answer", "error");
-      setTimeout(hideStatus, 3000);
-      // Re-enable buttons
-      if (item) item.querySelectorAll("button").forEach((b) => (b as HTMLButtonElement).disabled = false);
+      const result = await resp.json().catch(() => ({ error: "Failed" }));
+      showAnswerError(result.error || "Failed to send answer");
+      notifAnswerPanel.querySelectorAll("button:not(.notif-slide-panel-close)").forEach((b) => ((b as HTMLButtonElement).disabled = false));
     }
   } catch {
-    setStatus("Network error", "error");
-    setTimeout(hideStatus, 3000);
-    if (item) item.querySelectorAll("button").forEach((b) => (b as HTMLButtonElement).disabled = false);
+    showAnswerError("Network error");
+    notifAnswerPanel.querySelectorAll("button:not(.notif-slide-panel-close)").forEach((b) => ((b as HTMLButtonElement).disabled = false));
   }
 }
 
 function handleQuestionEvent(pq: PendingQuestionData) {
-  // Add to pending list if not already there
   if (!pendingQuestions.find((q) => q.id === pq.id)) {
     pendingQuestions.push(pq);
   }
-  // Auto-open the question overlay
-  openQuestionOverlay();
+  // If overlay is open, re-render cards to show the question badge
+  if (isNotifOverlayOpen()) {
+    renderNotifCards();
+    scrollToCard(notifIndex, "auto");
+  }
+  // Update bell state
+  updateNotifBtnState();
 }
 
 function handleQuestionAnswered(questionId: string) {
   pendingQuestions = pendingQuestions.filter((q) => q.id !== questionId);
-  if (isQuestionOverlayOpen() && pendingQuestions.length === 0) {
-    closeQuestionOverlay();
-  } else if (isQuestionOverlayOpen()) {
-    renderQuestions();
+  closeAnswerPanel();
+  if (isNotifOverlayOpen()) {
+    renderNotifCards();
+    scrollToCard(notifIndex, "auto");
   }
-}
-
-function isQuestionOverlayOpen() {
-  return questionOverlay.classList.contains("visible");
+  updateNotifBtnState();
 }
 
 async function fetchPendingQuestions() {
@@ -2068,15 +2197,9 @@ async function fetchPendingQuestions() {
     if (resp.ok) {
       const items = await resp.json();
       pendingQuestions = Array.isArray(items) ? items : [];
-      if (pendingQuestions.length > 0) {
-        openQuestionOverlay();
-      }
     }
   } catch {}
 }
-
-questionCloseBtn.addEventListener("click", closeQuestionOverlay);
-questionOverlay.querySelector(".overlay-backdrop")?.addEventListener("click", closeQuestionOverlay);
 
 // Register service worker
 if ("serviceWorker" in navigator) {

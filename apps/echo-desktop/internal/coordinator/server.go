@@ -50,6 +50,9 @@ type PendingQuestion struct {
 	ID          string              `json:"id"`
 	ReplyTarget string              `json:"reply_target"`
 	Questions   []QuestionItem      `json:"questions"`
+	Repo        string              `json:"repo,omitempty"`
+	Branch      string              `json:"branch,omitempty"`
+	Session     string              `json:"session,omitempty"`
 	CreatedAt   string              `json:"created_at"`
 	Answered    bool                `json:"answered"`
 }
@@ -996,6 +999,9 @@ func handleHookQuestion(w http.ResponseWriter, r *http.Request) {
 		ID          string         `json:"id"`
 		ReplyTarget string         `json:"reply_target"`
 		Questions   []QuestionItem `json:"questions"`
+		Repo        string         `json:"repo"`
+		Branch      string         `json:"branch"`
+		Session     string         `json:"session"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -1010,6 +1016,9 @@ func handleHookQuestion(w http.ResponseWriter, r *http.Request) {
 		ID:          body.ID,
 		ReplyTarget: body.ReplyTarget,
 		Questions:   body.Questions,
+		Repo:        body.Repo,
+		Branch:      body.Branch,
+		Session:     body.Session,
 		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
 	}
 
@@ -1039,20 +1048,18 @@ func handleQuestionAnswer(w http.ResponseWriter, r *http.Request) {
 
 	var body struct {
 		QuestionID string `json:"question_id"`
-		Index      int    `json:"index"`      // option index to select
-		OtherText  string `json:"other_text"`  // if "Other" was chosen
+		Index      int    `json:"index"`       // option index to select (single-select)
+		Indices    []int  `json:"indices"`      // option indices (multi-select)
+		OtherText  string `json:"other_text"`   // if "Other" was chosen
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 
-	pendingQuestionsMu.Lock()
+	pendingQuestionsMu.RLock()
 	pq, ok := pendingQuestions[body.QuestionID]
-	if ok {
-		pq.Answered = true
-	}
-	pendingQuestionsMu.Unlock()
+	pendingQuestionsMu.RUnlock()
 
 	if !ok {
 		writeJSONError(w, "Question not found", http.StatusNotFound)
@@ -1065,12 +1072,23 @@ func handleQuestionAnswer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !reg.sendSelect(pq.ReplyTarget, body.Index, body.OtherText) {
+	// Use indices if provided, otherwise fall back to single index
+	indices := body.Indices
+	if len(indices) == 0 {
+		indices = []int{body.Index}
+	}
+
+	if !reg.sendSelect(pq.ReplyTarget, indices, body.OtherText) {
 		writeJSONError(w, fmt.Sprintf("Target '%s' not connected", pq.ReplyTarget), http.StatusNotFound)
 		return
 	}
 
-	log.Printf("Question %s answered: index=%d other=%q -> %s", body.QuestionID, body.Index, body.OtherText, pq.ReplyTarget)
+	// Only mark as answered after successful send
+	pendingQuestionsMu.Lock()
+	pq.Answered = true
+	pendingQuestionsMu.Unlock()
+
+	log.Printf("Question %s answered: indices=%v other=%q -> %s", body.QuestionID, indices, body.OtherText, pq.ReplyTarget)
 
 	// Broadcast dismissal so PWA removes the question card
 	if reg != nil {

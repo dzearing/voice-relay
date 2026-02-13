@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sort"
 	"strconv"
 	"time"
 	"unicode/utf8"
@@ -22,7 +23,8 @@ type Message struct {
 	Name    string `json:"name,omitempty"`
 	Content string `json:"content,omitempty"`
 	Session int    `json:"session,omitempty"`
-	Index   int    `json:"index,omitempty"` // option index for "select" type
+	Index   int    `json:"index,omitempty"`   // option index for "select" type (single)
+	Indices []int  `json:"indices,omitempty"` // option indices for "select" type (multi)
 }
 
 func main() {
@@ -173,11 +175,16 @@ func connectAndServe(url, name string, p ptyHandle) {
 			log.Printf("[ws] injecting text (%d chars)", len(msg.Content))
 			injectText(p, msg.Content)
 		case "select":
-			// Navigate AskUserQuestion TUI: arrow-down N times, then Enter.
-			// If Content is set, it's an "Other" response: navigate to last
-			// option (index), press Enter to select "Other", then type the text.
-			log.Printf("[ws] selecting option index=%d content=%q", msg.Index, msg.Content)
-			injectSelect(p, msg.Index, msg.Content)
+			// Navigate AskUserQuestion TUI: arrow-down to select option(s).
+			// Single-select: arrow down to index, Enter.
+			// Multi-select: for each index, navigate and Space to toggle, then Enter.
+			// If Content is set, it's an "Other" response.
+			indices := msg.Indices
+			if len(indices) == 0 {
+				indices = []int{msg.Index}
+			}
+			log.Printf("[ws] selecting option indices=%v content=%q", indices, msg.Content)
+			injectSelect(p, indices, msg.Content)
 		}
 	}
 }
@@ -207,18 +214,50 @@ func injectText(p ptyHandle, text string) {
 }
 
 // injectSelect navigates an AskUserQuestion TUI picker.
-// It sends `index` down-arrow presses to reach the desired option, then Enter.
+// For single-select (one index): arrow down to the option, then Enter.
+// For multi-select (multiple indices): arrow down to each option and press
+// Space to toggle it, then press Enter to submit all selections.
 // If `otherText` is non-empty, the selected option is "Other" — after pressing
 // Enter on it, we type the custom text and press Enter again.
-func injectSelect(p ptyHandle, index int, otherText string) {
+func injectSelect(p ptyHandle, indices []int, otherText string) {
 	downArrow := []byte("\x1b[B") // ANSI escape: cursor down
-	for i := 0; i < index; i++ {
-		p.Write(downArrow)
-		time.Sleep(30 * time.Millisecond)
+	multiSelect := len(indices) > 1
+
+	if multiSelect {
+		// Sort indices so we can navigate forward through the list
+		sorted := make([]int, len(indices))
+		copy(sorted, indices)
+		sort.Ints(sorted)
+
+		currentPos := 0
+		for _, idx := range sorted {
+			// Navigate down to the target index
+			for currentPos < idx {
+				p.Write(downArrow)
+				time.Sleep(30 * time.Millisecond)
+				currentPos++
+			}
+			// Press Space to toggle this option
+			time.Sleep(50 * time.Millisecond)
+			p.Write([]byte{' '})
+			time.Sleep(30 * time.Millisecond)
+		}
+		// Press Enter to submit all selections
+		time.Sleep(50 * time.Millisecond)
+		p.Write([]byte{'\r'})
+	} else {
+		// Single-select: navigate and press Enter
+		idx := 0
+		if len(indices) > 0 {
+			idx = indices[0]
+		}
+		for i := 0; i < idx; i++ {
+			p.Write(downArrow)
+			time.Sleep(30 * time.Millisecond)
+		}
+		time.Sleep(50 * time.Millisecond)
+		p.Write([]byte{'\r'})
 	}
-	// Press Enter to select the option
-	time.Sleep(50 * time.Millisecond)
-	p.Write([]byte{'\r'})
 
 	if otherText != "" {
 		// Wait for "Other" text input to appear, then type
